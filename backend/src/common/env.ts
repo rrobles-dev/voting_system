@@ -18,6 +18,7 @@ export const env = {
   publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:5173',
   port: Number(process.env.PORT ?? 3000),
   votingRateLimit: Number(process.env.VOTING_RATE_LIMIT ?? 30), // intentos por minuto por IP
+  apiRateLimit: Number(process.env.API_RATE_LIMIT ?? 300),      // solicitudes por minuto por IP (resto de la API)
   // Solo desarrollo/tests: la API devuelve los códigos emitidos. Nunca en producción.
   exposeCodes: process.env.NODE_ENV !== 'production' && process.env.EXPOSE_CODES === 'true',
 };

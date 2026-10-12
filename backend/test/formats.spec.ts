@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import { normalizeHeader, readTable } from '../src/imports/tabular';
-import { normalizeRef, normalizeRut, parseCandidates, parseRoll, refKey, rutCheckDigit, templates } from '../src/imports/formats';
+import { nameKey, nameWarnings, normalizeRef, normalizeRut, parseCandidates, parseRoll, refKey, rutCheckDigit, templates } from '../src/imports/formats';
 
 const csv = (s: string) => Buffer.from(s, 'utf8');
 
@@ -134,5 +134,21 @@ describe('duplicados en el padrón', () => {
   it('detecta el mismo correo aunque cambien las mayúsculas (cualquier tipo)', async () => {
     const { errors } = await roll('rut_o_id,empresa,correo\nS1,A,Socios@X.cl\nS2,B,socios@x.cl\n', 'CODE');
     expect(errors).toEqual(['Fila 3: correo repetido (socios@x.cl, ya está en la fila 2)']);
+  });
+});
+
+describe('nombres parecidos (solo advertencia)', () => {
+  it('ignora tildes, mayúsculas, puntuación y tipo societario', () => {
+    expect(nameKey('Filtros Mineros S.p.A.')).toBe('filtros mineros');
+    expect(nameKey('FILTROS MINEROS SPA')).toBe('filtros mineros');
+    expect(nameKey('Ñandú Ltda.')).toBe('nandu');
+    expect(nameKey('Grúas del Pacífico S.A.')).toBe(nameKey('gruas del pacifico'));
+  });
+  it('no confunde empresas distintas', () => {
+    expect(nameKey('Aceros del Norte')).not.toBe(nameKey('Aceros del Sur'));
+  });
+  it('genera advertencias con la fila del original', () => {
+    expect(nameWarnings([{ organization: 'Filtros Mineros SpA' }, { organization: 'Otra' }, { organization: 'filtros mineros ltda' }]))
+      .toEqual(['Fila 4: "filtros mineros ltda" se parece a la empresa de la fila 2']);
   });
 });

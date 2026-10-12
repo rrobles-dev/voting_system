@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { api, ApiError } from '../api/client';
 import type { Election, ParsedCandidates, RollValidation } from '../api/types';
-import { FileErrors, TemplateLinks } from './Templates';
+import { FileErrors, TemplateLinks, WarningsConfirm } from './Templates';
 
 /**
  * Formulario de proceso en dos pasos: completar → revisar → confirmar.
@@ -53,6 +53,7 @@ export function ElectionForm({ initial, onDone, onCancel }: {
   const [candidateMsg, setCandidateMsg] = useState<{ text: string; errors?: string[] } | null>(null);
   const [rollFile, setRollFile] = useState<File | null>(null);
   const [rollCheck, setRollCheck] = useState<RollValidation | null>(null);
+  const [rollWarningsOk, setRollWarningsOk] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -85,6 +86,7 @@ export function ElectionForm({ initial, onDone, onCancel }: {
   async function checkRoll(file: File, type = refType) {
     setRollFile(file);
     setRollCheck(null);
+    setRollWarningsOk(false);
     if (!type) {
       setRollCheck({ total: 0, eligible: 0, notEligible: 0, errors: ['Primero elige el tipo de identificador (RUT u otro código) para validar el padrón'] });
       return;
@@ -129,6 +131,7 @@ export function ElectionForm({ initial, onDone, onCancel }: {
       if (new Set(lower).size !== lower.length) errs.push(`${label}: hay candidatos repetidos`);
     });
     if (rollCheck?.errors.length) errs.push('El padrón tiene errores: corrígelo o quítalo');
+    if (rollCheck?.warnings?.length && !rollWarningsOk) errs.push('El padrón tiene empresas con nombres parecidos: revisa las advertencias y confírmalas');
     return errs;
   }
 
@@ -176,7 +179,9 @@ export function ElectionForm({ initial, onDone, onCancel }: {
       const saved = editing
         ? await api.put<Election>(`/admin/elections/${initial!.id}`, body)
         : await api.post<Election>('/admin/elections', body, true);
-      if (rollFile) await api.postFile(`/admin/elections/${saved.id}/voters/import`, rollFile).catch(() => null);
+      if (rollFile) {
+        await api.postFile(`/admin/elections/${saved.id}/voters/import`, rollFile, rollWarningsOk ? { confirmWarnings: 'true' } : {}).catch(() => null);
+      }
       onDone(saved.id);
     } catch (err) {
       setErrors([(err as ApiError).message]);
@@ -311,6 +316,10 @@ export function ElectionForm({ initial, onDone, onCancel }: {
             <p className="notice ok">{rollFile.name}: {rollCheck.total} empresas, {rollCheck.eligible} habilitadas{rollCheck.notEligible ? `, ${rollCheck.notEligible} bloqueadas` : ''}. Se cargará al crear el proceso.</p>
           )}
           <FileErrors errors={rollCheck?.errors} />
+          {!rollCheck?.errors.length && (
+            <WarningsConfirm warnings={rollCheck?.warnings} confirmed={rollWarningsOk} onChange={setRollWarningsOk}
+              label="Las revisé: son empresas distintas" />
+          )}
           {rollFile && <button type="button" className="btn small" onClick={() => { setRollFile(null); setRollCheck(null); }}>Quitar padrón</button>}
         </fieldset>
       )}

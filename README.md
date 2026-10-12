@@ -27,7 +27,9 @@ El votante recibe un **código de recibo**. Con él puede verificar que su voto 
 
 - Un voto por empresa, con padrón entregado por el admin. Las empresas sin cuotas al día quedan bloqueadas (`habilitado = no`).
 - **Tipo de identificador declarado por proceso**: RUT chileno (se normaliza `76.123.456-0` = `76123456-0` y se valida el dígito verificador) u otro código propio (se guarda tal cual; puntos y guiones son significativos). No se adivina mirando el valor: `12345` puede ser un número de socio.
-- **Sin duplicados**: ni por identificador (según su tipo) ni por correo, tanto al cargar el padrón como al agregar votantes uno a uno. Dos empresas con el mismo correo recibirían ambos códigos en la misma bandeja.
+- **Sin duplicados**: ni por identificador (según su tipo) ni por correo, tanto al cargar el padrón como al agregar votantes uno a uno. El correo es el campo más crítico: el código llega ahí, así que quien controla la bandeja controla el voto. Dos empresas nunca pueden compartir correo, aunque tengan el mismo representante.
+- **Nombres parecidos como advertencia**: "Filtros Mineros SpA" y "FILTROS MINEROS S.A." se detectan (sin tildes, mayúsculas ni tipo societario) y la comisión debe confirmar que son empresas distintas. No bloquea, porque dos razones sociales de un mismo grupo pueden llamarse casi igual; la confirmación queda en la consola.
+- **Cambiar el correo de un votante** con motivo: invalida el código anterior (pudo quedar en la bandeja antigua) y, con la votación abierta, envía uno nuevo. La consola registra el correo anterior, el nuevo y el motivo, igual que al quitar o bloquear a alguien.
 - **Plantillas descargables** de padrón y candidatos en Excel (.xlsx, con hoja de instrucciones y lista desplegable) y CSV. La carga acepta .xlsx o CSV con separador `,` o `;`, porque **Excel en español guarda los CSV con punto y coma**. Los archivos se validan antes de crear el proceso y se informan **todos** los errores con su número de fila.
 - Códigos de 9 caracteres (configurable) con mayúsculas y minúsculas, sin caracteres ambiguos (`0/O`, `1/l/I`). Se guardan hasheados con HMAC, nunca en claro.
 - Varios cargos por proceso, cada uno con cupos y mínimo/máximo de marcas.
@@ -84,7 +86,8 @@ El votante recibe un **código de recibo**. Con él puede verificar que su voto 
 5. **JSON canónico en el log**: Postgres `jsonb` reordena las claves, así que el hash se calcula sobre el JSON con claves ordenadas.
 6. **Sin diálogos nativos del navegador**: todas las confirmaciones y motivos se piden dentro de la página. `window.confirm()` y `window.prompt()` los bloquean algunos navegadores integrados (como el de VS Code) y los iframes aislados, y el botón parece no hacer nada.
 7. **Mensajes basados en lo que realmente ocurrió**: la interfaz arma el mensaje de éxito con los números que devuelve la API (códigos emitidos, correos entregados), nunca con un texto fijo. En un sistema electoral, un "enviado" que no ocurrió es peor que un error.
-8. **Rate limit configurable** (`VOTING_RATE_LIMIT`): varios votantes pueden compartir IP (misma oficina, asamblea presencial). Un límite muy estricto bloquearía a votantes legítimos.
+8. **Errores de carga visibles**: si una consulta falla, la interfaz lo dice y sigue reintentando. Un "Cargando…" eterno es un falso estado, igual que un "enviado" que no ocurrió.
+9. **Rate limit configurable** (`VOTING_RATE_LIMIT`): varios votantes pueden compartir IP (misma oficina, asamblea presencial). Un límite muy estricto bloquearía a votantes legítimos.
 
 ## Correr en local
 
@@ -124,8 +127,8 @@ cd e2e
 npm install
 npx playwright install chromium
 npx playwright test                 # E2E en móvil, tablet y escritorio
-# El backend debe correr con EXPOSE_CODES=true y VOTING_RATE_LIMIT=1000:
-# la suite completa hace más intentos por minuto desde una sola IP que los que permite el límite normal.
+# El backend debe correr con EXPOSE_CODES=true VOTING_RATE_LIMIT=1000 API_RATE_LIMIT=5000:
+# la suite completa hace muchas más solicitudes por minuto desde una sola IP que un uso normal.
 npx playwright show-report
 ```
 
@@ -141,7 +144,7 @@ npx playwright show-report
 | POST | `/api/admin/templates/padron/validate` · `/candidatos/parse` (multipart `file`) | Admin |
 | PUT | `/api/admin/elections/:id` (solo en borrador) | Admin |
 | POST | `/api/admin/elections/:id/voters/import` (multipart `file`: .xlsx o .csv; solo en borrador) | Admin |
-| POST | `/api/admin/elections/:id/voters` · PATCH `/voters/:voterId/eligibility` · POST `/voters/:voterId/remove` (motivo obligatorio con la votación abierta) | Admin |
+| POST | `/api/admin/elections/:id/voters` · PATCH `/voters/:voterId/eligibility` · PATCH `/voters/:voterId/email` · POST `/voters/:voterId/remove` (motivo obligatorio con la votación abierta) | Admin |
 | POST | `/api/admin/elections/:id/codes/issue` | Admin |
 | POST | `/api/admin/elections/:id/voters/:voterId/reissue` | Admin |
 | POST | `/api/admin/elections/:id/open` · `/close` | Admin |
@@ -161,4 +164,10 @@ npx playwright show-report
 ## Hoja de ruta
 
 - **v2**: textos, colores y logo configurables por proceso (también en la página insertable); asistente de configuración con plantillas; ponderación de votos sin riesgo de reidentificación; acta en PDF y presentación de resultados; Keycloak/JWT; purga automática según `retentionDays`.
+- **v2 · Campos configurables del padrón**: no todos los procesos son gremiales. Un centro de alumnos necesita nombres y apellidos separados, carrera y año; un sindicato, número de socio y sección. El diseño previsto:
+  - Cada proceso define su **esquema de votante**: campos con etiqueta, tipo (texto, número, lista, fecha), obligatoriedad y si cuentan para detectar duplicados.
+  - Lo que hoy es "empresa" pasa a ser un **nombre para mostrar** configurable ("Empresa", "Estudiante", "Socio").
+  - Los datos extra se guardan en una columna JSON validada contra el esquema; identificador y correo siguen siendo columnas fijas porque sostienen la integridad del voto.
+  - Las plantillas Excel/CSV se **generan desde el esquema** de cada proceso.
+  - Los campos extra quedan disponibles para **filtrar la participación** (por ejemplo, por carrera), nunca para cruzar con los votos.
 - **v3**: resumen narrativo del proceso generado con IA para el informe final.

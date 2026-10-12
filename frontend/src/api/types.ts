@@ -41,6 +41,6 @@ export interface PublicResults {
 }
 export interface AuditEvent { seq: number; type: string; actor: string; payload: Record<string, unknown>; createdAt: string; hash: string }
 export interface Annulment { id: string; voterId: string; reason: string; status: 'REQUESTED' | 'APPROVED' | 'REJECTED'; requestedAt: string }
-export interface RollValidation { total: number; eligible: number; notEligible: number; errors: string[] }
+export interface RollValidation { total: number; eligible: number; notEligible: number; errors: string[]; warnings?: string[] }
 export interface ParsedCandidates { positions: { position: string; candidates: { name: string; detail?: string }[] }[]; errors: string[] }
 export interface IssueResult { issued: number; emailed: number; voters: { organization: string; emailed: boolean; code?: string }[] }

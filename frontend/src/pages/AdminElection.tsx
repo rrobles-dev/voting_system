@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, ApiError } from '../api/client';
 import type { ActaVerification, Annulment, AuditEvent, Election, IssueResult, ParticipationReport, Results } from '../api/types';
-import { FileErrors, TemplateLinks } from '../components/Templates';
+import { FileErrors, TemplateLinks, WarningsConfirm } from '../components/Templates';
 import { ElectionForm } from '../components/ElectionForm';
 import { useConfirm } from '../components/Confirm';
 import { STATUS_LABEL } from './AdminElections';
@@ -12,7 +12,7 @@ type Tab = 'participacion' | 'consola' | 'resultados' | 'padron' | 'anulaciones'
 
 const EVENT_LABEL: Record<string, string> = {
   ELECTION_CREATED: 'Proceso creado', ELECTION_UPDATED: 'Proceso editado', VOTER_ADDED: 'Votante agregado',
-  VOTER_ENABLED: 'Votante habilitado', VOTER_DISABLED: 'Votante bloqueado', VOTER_REMOVED: 'Votante quitado del padrón', AUTO_OPEN_BLOCKED: 'Apertura automática bloqueada', ROLL_IMPORTED: 'Padrón importado', CODE_ISSUED: 'Código emitido',
+  VOTER_ENABLED: 'Votante habilitado', VOTER_DISABLED: 'Votante bloqueado', VOTER_REMOVED: 'Votante quitado del padrón', VOTER_EMAIL_CHANGED: 'Correo de votante cambiado', AUTO_OPEN_BLOCKED: 'Apertura automática bloqueada', ROLL_IMPORTED: 'Padrón importado', CODE_ISSUED: 'Código emitido',
   CODE_REISSUED: 'Código reemitido', ELECTION_OPEN: 'Votación abierta', ELECTION_CLOSED: 'Votación cerrada',
   ELECTION_TALLIED: 'Escrutinio publicado', ACTA_ISSUED: 'Acta oficial emitida', TIE_RESOLVED: 'Empate resuelto (acta complementaria)',
   MEMBERS_NOTIFIED: 'Resultados notificados a los socios', PUBLIC_RESULTS_ENABLED: 'Resultados públicos habilitados',
@@ -165,13 +165,17 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
   const [filter, setFilter] = useState<'all' | 'pending' | 'voted' | 'blocked'>('all');
   const [adding, setAdding] = useState(false);
   const [pending, setPending] = useState<PendingAction | null>(null);
-  const load = useCallback(() => api.get<ParticipationReport>(`/admin/elections/${id}/participation`, true).then(setData).catch(() => null), [id]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Nunca tragarse el error: si falla, se dice y el refresco automático sigue reintentando
+  const load = useCallback(() => api.get<ParticipationReport>(`/admin/elections/${id}/participation`, true)
+    .then((d) => { setData(d); setLoadError(null); })
+    .catch((e: ApiError) => setLoadError(e.message)), [id]);
   useEffect(() => {
     load();
     const t = setInterval(load, 10_000); // polling cada 10 s
     return () => clearInterval(t);
   }, [load]);
-  if (!data) return <p>Cargando…</p>;
+  if (!data) return loadError ? <LoadError message={loadError} onRetry={load} /> : <p>Cargando…</p>;
 
   const open = data.status === 'OPEN';
   const editable = data.status === 'DRAFT' || open;
@@ -187,9 +191,12 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
    * prompt()/confirm() del navegador (algunos navegadores integrados, como el de VS Code,
    * los cancelan en silencio y el botón "no hace nada").
    */
-  async function execute(a: PendingAction, reason: string) {
+  async function execute(a: PendingAction, reason: string, email: string) {
     const base = `/admin/elections/${id}/voters/${a.voter.id}`;
     const r = reason || undefined;
+    if (a.kind === 'email') {
+      return run(() => api.patch(`${base}/email`, { email, reason: r }), `Correo de ${a.voter.organization} actualizado${open ? '; se le envió un código nuevo' : ''}`);
+    }
     if (a.kind === 'reissue') return run(() => api.post(`${base}/reissue`, {}, true), `Código nuevo enviado a ${a.voter.organization}`);
     if (a.kind === 'remove') return run(() => api.post(`${base}/remove`, { reason: r }, true), `${a.voter.organization} quitada del padrón`);
     const eligible = a.kind === 'enable';
@@ -201,6 +208,7 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
 
   return (
     <section>
+      {loadError && <LoadError message={loadError} onRetry={load} stale />}
       <div className="stats">
         <div className="stat"><span className="stat-value">{data.voted}</span><span className="stat-label">votaron</span></div>
         <div className="stat"><span className="stat-value">{data.eligible - data.voted}</span><span className="stat-label">pendientes</span></div>
@@ -224,7 +232,7 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
       {adding && <AddVoter id={id} open={open} onDone={(msg) => { setAdding(false); run(async () => undefined, msg); }} />}
       {pending && (
         <ConfirmAction action={pending} needsReason={open && pending.kind !== 'reissue'}
-          onCancel={() => setPending(null)} onConfirm={async (reason) => { await execute(pending, reason); setPending(null); }} />
+          onCancel={() => setPending(null)} onConfirm={async (reason, email) => { await execute(pending, reason, email); setPending(null); }} />
       )}
       <div className="table-wrap">
         <table>
@@ -240,6 +248,7 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
                   {editable && !v.votedAt && (
                     <button className="btn small" onClick={() => setPending({ kind: v.eligible ? 'disable' : 'enable', voter: v })}>{v.eligible ? 'Bloquear' : 'Habilitar'}</button>
                   )}
+                  {editable && !v.votedAt && <button className="btn small" onClick={() => setPending({ kind: 'email', voter: v })}>Cambiar correo</button>}
                   {editable && !v.votedAt && <button className="btn small danger" onClick={() => setPending({ kind: 'remove', voter: v })}>Quitar</button>}
                 </td>
               </tr>
@@ -253,27 +262,35 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
 }
 
 type VoterRow = ParticipationReport['voters'][number];
-type PendingAction = { kind: 'enable' | 'disable' | 'remove' | 'reissue'; voter: VoterRow };
+type PendingAction = { kind: 'enable' | 'disable' | 'remove' | 'reissue' | 'email'; voter: VoterRow };
 
 const ACTION_TEXT: Record<PendingAction['kind'], (org: string) => { title: string; detail: string; cta: string }> = {
   enable: (o) => ({ title: `Habilitar a ${o}`, detail: 'Podrá votar. Con la votación abierta, recibirá su código de inmediato.', cta: 'Habilitar' }),
   disable: (o) => ({ title: `Bloquear a ${o}`, detail: 'No podrá votar y su código actual dejará de funcionar.', cta: 'Bloquear' }),
   remove: (o) => ({ title: `Quitar a ${o} del padrón`, detail: 'Úsalo para registros erróneos o duplicados. Solo es posible si nunca votó. Queda registrado en la consola.', cta: 'Quitar del padrón' }),
   reissue: (o) => ({ title: `Reemitir el código de ${o}`, detail: 'Se le enviará un código nuevo y el anterior dejará de funcionar.', cta: 'Reemitir código' }),
+  email: (o) => ({ title: `Cambiar el correo de ${o}`, detail: 'El código actual dejará de funcionar (pudo quedar en la bandeja anterior). Con la votación abierta, se enviará uno nuevo al correo nuevo. El cambio queda registrado con el correo anterior.', cta: 'Cambiar correo' }),
 };
 
 /** Confirmación dentro de la página, con motivo cuando la votación está abierta. */
 function ConfirmAction({ action, needsReason, onConfirm, onCancel }: {
-  action: PendingAction; needsReason: boolean; onConfirm: (reason: string) => Promise<void>; onCancel: () => void;
+  action: PendingAction; needsReason: boolean; onConfirm: (reason: string, email: string) => Promise<void>; onCancel: () => void;
 }) {
   const [reason, setReason] = useState('');
+  const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const t = ACTION_TEXT[action.kind](action.voter.organization);
-  const valid = !needsReason || reason.trim().length >= 10;
+  const emailOk = action.kind !== 'email' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const valid = (!needsReason || reason.trim().length >= 10) && emailOk;
   return (
     <div className="card confirm-panel" role="dialog" aria-labelledby="confirm-title">
       <h3 id="confirm-title">{t.title}</h3>
       <p className="help">{t.detail}</p>
+      {action.kind === 'email' && (
+        <label>Correo nuevo <span className="muted small">(actual: {action.voter.email})</span>
+          <input type="email" autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+        </label>
+      )}
       {needsReason && (
         <label>Motivo (obligatorio con la votación abierta; queda en la consola)
           <input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ej.: regularizó su cuota hoy" />
@@ -283,7 +300,7 @@ function ConfirmAction({ action, needsReason, onConfirm, onCancel }: {
       <div className="toolbar">
         <button className="btn" onClick={onCancel} disabled={busy}>Cancelar</button>
         <button className={`btn ${action.kind === 'remove' || action.kind === 'disable' ? 'danger' : 'primary'}`} disabled={!valid || busy}
-          onClick={async () => { setBusy(true); await onConfirm(reason.trim()); setBusy(false); }}>
+          onClick={async () => { setBusy(true); await onConfirm(reason.trim(), email.trim()); setBusy(false); }}>
           {busy ? '…' : t.cta}
         </button>
       </div>
@@ -294,16 +311,21 @@ function ConfirmAction({ action, needsReason, onConfirm, onCancel }: {
 function AddVoter({ id, open, onDone }: { id: string; open: boolean; onDone: (msg: string) => void }) {
   const [form, setForm] = useState({ ref: '', organization: '', email: '', reason: '' });
   const [error, setError] = useState<string | null>(null);
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  const [warning, setWarning] = useState<{ message: string; warnings: string[] } | null>(null);
+  async function submit(e: FormEvent | null, confirmWarnings = false) {
+    e?.preventDefault();
     setError(null);
     try {
-      const r = await api.post<{ codeIssued: boolean; emailed: boolean }>(`/admin/elections/${id}/voters`, { ...form, reason: form.reason || undefined }, true);
+      const r = await api.post<{ codeIssued: boolean; emailed: boolean }>(
+        `/admin/elections/${id}/voters`, { ...form, reason: form.reason || undefined, confirmWarnings: confirmWarnings || undefined }, true,
+      );
+      setWarning(null);
       onDone(r.codeIssued
         ? `${form.organization} agregada; ${r.emailed ? 'se le envió su código' : 'su código se emitió, pero el correo falló: reemítelo'}`
         : `${form.organization} agregada al padrón`);
     } catch (err) {
       const e2 = err as ApiError;
+      if (e2.needsConfirmation) { setWarning({ message: e2.message, warnings: e2.warnings ?? [] }); return; }
       setError(e2.details?.length ? e2.details.join('. ') : e2.message);
     }
   }
@@ -321,17 +343,56 @@ function AddVoter({ id, open, onDone }: { id: string; open: boolean; onDone: (ms
       )}
       <p className="help">{open ? 'Al agregarla quedará habilitada y recibirá su código de inmediato.' : 'Quedará habilitada; recibirá su código al emitirlos o al abrir.'}</p>
       {error && <p className="error" role="alert">{error}</p>}
-      <button className="btn primary">Agregar</button>
+      {warning ? (
+        <div className="notice warn" role="status">
+          <strong>{warning.message}</strong>
+          {warning.warnings.map((w) => <p key={w} className="small">{w}</p>)}
+          <div className="toolbar">
+            <button type="button" className="btn" onClick={() => setWarning(null)}>Revisar datos</button>
+            <button type="button" className="btn primary" onClick={() => submit(null, true)}>Son empresas distintas: agregar</button>
+          </div>
+        </div>
+      ) : <button className="btn primary">Agregar</button>}
     </form>
   );
+}
+
+/** Error de carga visible: "Cargando…" eterno es un falso estado, igual que un "enviado" que no ocurrió. */
+function LoadError({ message, onRetry, stale }: { message: string; onRetry?: () => void; stale?: boolean }) {
+  return (
+    <div className="notice warn" role="alert">
+      {stale ? 'No se pudo actualizar: los datos mostrados pueden estar desactualizados. ' : 'No se pudieron cargar los datos. '}
+      <span className="muted small">({message}). Se reintentará automáticamente.</span>
+      {onRetry && <> <button className="btn small" onClick={onRetry}>Reintentar ahora</button></>}
+    </div>
+  );
+}
+
+/**
+ * Detalle legible de un evento: a quién afectó y por qué. Así el motivo de cada cambio
+ * (quitar, bloquear, cambiar correo, anular…) queda a la vista sin abrir la base de datos.
+ */
+function eventDetail(e: AuditEvent): string {
+  const p = e.payload as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof p.organization === 'string') parts.push(p.organization);
+  if (typeof p.from === 'string' && typeof p.to === 'string' && e.type === 'VOTER_EMAIL_CHANGED') parts.push(`${p.from} → ${p.to}`);
+  if (typeof p.similarTo === 'string') parts.push(`parecida a ${p.similarTo}`);
+  if (Array.isArray(p.confirmedWarnings) && p.confirmedWarnings.length) parts.push(`${p.confirmedWarnings.length} advertencia(s) confirmada(s)`);
+  if (typeof p.reason === 'string' && p.reason) parts.push(`Motivo: ${p.reason}`);
+  if (typeof p.note === 'string') parts.push(p.note);
+  return parts.join(' · ');
 }
 
 /** Consola del proceso: eventos del log, sin tendencias. */
 function ConsoleTab({ id }: { id: string }) {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [chain, setChain] = useState<{ ok: boolean; brokenAt?: number } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
-    const load = () => api.get<AuditEvent[]>(`/admin/elections/${id}/audit`, true).then(setEvents).catch(() => null);
+    const load = () => api.get<AuditEvent[]>(`/admin/elections/${id}/audit`, true)
+      .then((ev) => { setEvents(ev); setLoadError(null); })
+      .catch((e: ApiError) => setLoadError(e.message));
     load();
     const t = setInterval(load, 10_000);
     return () => clearInterval(t);
@@ -344,11 +405,15 @@ function ConsoleTab({ id }: { id: string }) {
         </button>
         {chain && <span className={`notice inline ${chain.ok ? 'ok' : 'warn'}`}>{chain.ok ? 'Cadena íntegra' : `Cadena alterada en el evento #${chain.brokenAt}`}</span>}
       </div>
+      {loadError && <LoadError message={loadError} stale={events.length > 0} />}
       <ol className="console">
         {[...events].reverse().map((e) => (
           <li key={e.seq}>
             <time>{new Date(e.createdAt).toLocaleString('es-CL')}</time>
-            <span className="event">{EVENT_LABEL[e.type] ?? e.type}</span>
+            <span className="event">
+              {EVENT_LABEL[e.type] ?? e.type}
+              {eventDetail(e) && <span className="event-detail">{eventDetail(e)}</span>}
+            </span>
             <span className="actor">{e.actor}</span>
             <code className="hash" title={e.hash}>#{e.seq} · {e.hash.slice(0, 10)}</code>
           </li>
@@ -538,13 +603,21 @@ function RollTab({ election, onDone }: { election: Election; onDone: () => void 
   const [reason, setReason] = useState('');
   const closed = election.status === 'CLOSED' || election.status === 'TALLIED';
 
-  async function upload(file: File) {
+  const [pendingFile, setPendingFile] = useState<{ file: File; warnings: string[] } | null>(null);
+  const [warningsOk, setWarningsOk] = useState(false);
+
+  async function upload(file: File, confirm = false) {
+    setMsg(null);
     try {
-      const r = await api.postFile<{ total: number; eligible: number }>(`/admin/elections/${election.id}/voters/import`, file);
+      const r = await api.postFile<{ total: number; eligible: number }>(
+        `/admin/elections/${election.id}/voters/import`, file, confirm ? { confirmWarnings: 'true' } : {},
+      );
+      setPendingFile(null);
       setMsg({ kind: 'ok', text: `Padrón cargado: ${r.total} registros, ${r.eligible} habilitados.` });
       onDone();
     } catch (err) {
       const e = err as ApiError;
+      if (e.needsConfirmation) { setPendingFile({ file, warnings: e.warnings ?? [] }); setWarningsOk(false); return; }
       setMsg({ kind: 'warn', text: e.message, errors: e.details });
     }
   }
@@ -560,6 +633,15 @@ function RollTab({ election, onDone }: { election: Election; onDone: () => void 
         <input type="file" accept=".xlsx,.csv,text/csv" disabled={election.status !== 'DRAFT'}
           onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) upload(f); }} />
         {msg && (msg.errors?.length ? <><p className="notice warn">{msg.text}</p><FileErrors errors={msg.errors} /></> : <p className={`notice ${msg.kind}`}>{msg.text}</p>)}
+        {pendingFile && (
+          <>
+            <WarningsConfirm warnings={pendingFile.warnings} confirmed={warningsOk} onChange={setWarningsOk} label="Las revisé: son empresas distintas" />
+            <div className="toolbar">
+              <button className="btn" onClick={() => setPendingFile(null)}>Cancelar</button>
+              <button className="btn primary" disabled={!warningsOk} onClick={() => upload(pendingFile.file, true)}>Cargar padrón</button>
+            </div>
+          </>
+        )}
       </div>
       <div className="card">
         <h2>Reportes</h2>

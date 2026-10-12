@@ -1,6 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { readTable } from '../imports/tabular';
-import { normalizeEmail, normalizeRef, normalizeRut, parseRoll, RefType, refKey } from '../imports/formats';
+import { nameKey, nameWarnings, normalizeEmail, parseRoll, RefType, refKey } from '../imports/formats';
 import { DataSource } from 'typeorm';
 import { AccessCode, CodeStatus, Election, ElectionStatus, Participation, Voter } from '../database/entities';
 import { AuditService } from '../audit/audit.service';
@@ -36,27 +36,33 @@ export class VotersService {
     }
     const { rows, errors } = parseRoll(table, refType);
     const eligible = rows.filter((r) => r.eligible).length;
-    return { rows, errors, summary: { total: rows.length, eligible, notEligible: rows.length - eligible } };
+    return { rows, errors, warnings: nameWarnings(rows), summary: { total: rows.length, eligible, notEligible: rows.length - eligible } };
   }
 
   /**
    * Importa el padrón (Excel o CSV). Valida TODO antes de escribir: si una fila falla,
    * no se importa nada (mejor un error claro que un padrón a medias).
    */
-  async importRoll(electionId: string, buffer: Buffer, filename: string) {
+  async importRoll(electionId: string, buffer: Buffer, filename: string, confirmWarnings = false) {
     const election = await this.ds.getRepository(Election).findOneBy({ id: electionId });
     if (!election) throw new NotFoundException('Elección no encontrada');
     if (election.status !== ElectionStatus.DRAFT) throw new BadRequestException('El padrón solo se carga en estado borrador');
 
-    const { rows, errors, summary } = await this.validateRoll(buffer, filename, election.refType);
+    const { rows, errors, warnings, summary } = await this.validateRoll(buffer, filename, election.refType);
     if (errors.length) throw new BadRequestException({ message: 'El padrón tiene errores', errors });
+    // Advertencias: no bloquean, pero exigen que la comisión confirme que las revisó
+    if (warnings.length && !confirmWarnings) {
+      throw new ConflictException({ message: 'Revisa estas advertencias antes de cargar el padrón', warnings, needsConfirmation: true });
+    }
 
     await this.ds.transaction(async (em) => {
       await em.delete(Voter, { electionId }); // reemplaza el padrón completo
       await em.insert(Voter, rows.map((r) => ({
         electionId, externalRef: r.ref, organization: r.organization, email: r.email, weight: r.weight, eligible: r.eligible,
       })));
-      await this.audit.log(em, electionId, 'ROLL_IMPORTED', 'ADMIN', { total: summary.total, eligible: summary.eligible, file: filename });
+      await this.audit.log(em, electionId, 'ROLL_IMPORTED', 'ADMIN', {
+        total: summary.total, eligible: summary.eligible, file: filename, confirmedWarnings: warnings,
+      });
     });
     return summary;
   }
@@ -77,7 +83,9 @@ export class VotersService {
     return election;
   }
 
-  async addVoter(electionId: string, dto: { ref: string; organization: string; email: string; weight?: number; eligible?: boolean; reason?: string }) {
+  async addVoter(electionId: string, dto: {
+    ref: string; organization: string; email: string; weight?: number; eligible?: boolean; reason?: string; confirmWarnings?: boolean;
+  }) {
     const election = await this.editable(electionId, dto.reason);
     const { rows, errors } = parseRoll({
       headers: ['rut_o_id', 'empresa', 'correo', 'peso', 'habilitado'],
@@ -91,13 +99,24 @@ export class VotersService {
     if (sameRef) throw new BadRequestException(`Ya existe un votante con el identificador ${rows[0].ref} (${sameRef.organization})`);
     const sameEmail = current.find((v) => normalizeEmail(v.email) === rows[0].email);
     if (sameEmail) throw new BadRequestException(`El correo ${rows[0].email} ya está asignado a ${sameEmail.organization}: cada empresa debe tener su propio correo`);
+    const sameName = current.find((v) => nameKey(v.organization) === nameKey(rows[0].organization));
+    if (sameName && !dto.confirmWarnings) {
+      throw new ConflictException({
+        message: `"${rows[0].organization}" se parece a "${sameName.organization}" (${sameName.externalRef}), que ya está en el padrón`,
+        warnings: ['Confirma solo si son empresas distintas (por ejemplo, dos razones sociales de un mismo grupo).'],
+        needsConfirmation: true,
+      });
+    }
 
     const voter = await this.ds.transaction(async (em) => {
       const v = await em.save(em.create(Voter, {
         electionId, externalRef: rows[0].ref, organization: rows[0].organization, email: rows[0].email,
         weight: rows[0].weight, eligible: rows[0].eligible,
       }));
-      await this.audit.log(em, electionId, 'VOTER_ADDED', 'ADMIN', { voterId: v.id, organization: v.organization, eligible: v.eligible, reason: dto.reason ?? null });
+      await this.audit.log(em, electionId, 'VOTER_ADDED', 'ADMIN', {
+        voterId: v.id, organization: v.organization, eligible: v.eligible, reason: dto.reason ?? null,
+        ...(sameName ? { similarTo: sameName.organization } : {}),
+      });
       return v;
     });
     // Con la votación abierta, un votante habilitado recibe su código de inmediato.
@@ -122,6 +141,34 @@ export class VotersService {
     });
     const issued = eligible && election.status === ElectionStatus.OPEN ? await this.issueCodes(electionId, voterId) : null;
     return { eligible, codeIssued: Boolean(issued?.issued), emailed: Boolean(issued?.emailed) };
+  }
+
+  /**
+   * Cambiar el correo de un votante (por ejemplo, la empresa cambió de representante).
+   * El código anterior se invalida, porque pudo quedar en la bandeja antigua; con la votación
+   * abierta se emite uno nuevo al correo nuevo. Queda registrado el correo anterior y el nuevo.
+   */
+  async changeEmail(electionId: string, voterId: string, newEmail: string, reason?: string) {
+    const election = await this.editable(electionId, reason);
+    const voter = await this.ds.getRepository(Voter).findOneBy({ id: voterId, electionId });
+    if (!voter) throw new NotFoundException('Votante no encontrado');
+    const email = normalizeEmail(newEmail);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException('Correo inválido');
+    if (email === normalizeEmail(voter.email)) throw new BadRequestException('Es el mismo correo actual');
+    const voted = await this.ds.getRepository(Participation).existsBy({ electionId, voterId, annulled: false });
+    if (voted) throw new BadRequestException('Este votante ya votó: cambiar su correo no tiene efecto en el proceso');
+    const taken = (await this.ds.getRepository(Voter).findBy({ electionId })).find((v) => v.id !== voterId && normalizeEmail(v.email) === email);
+    if (taken) throw new BadRequestException(`El correo ${email} ya está asignado a ${taken.organization}: cada empresa debe tener su propio correo`);
+
+    await this.ds.transaction(async (em) => {
+      await em.update(Voter, { id: voterId }, { email });
+      await em.update(AccessCode, { voterId, status: CodeStatus.ACTIVE }, { status: CodeStatus.INVALIDATED });
+      await this.audit.log(em, electionId, 'VOTER_EMAIL_CHANGED', 'ADMIN', {
+        voterId, organization: voter.organization, from: voter.email, to: email, reason: reason ?? null,
+      });
+    });
+    const issued = election.status === ElectionStatus.OPEN && voter.eligible ? await this.issueCodes(electionId, voterId) : null;
+    return { email, codeIssued: Boolean(issued?.issued), emailed: Boolean(issued?.emailed) };
   }
 
   /**

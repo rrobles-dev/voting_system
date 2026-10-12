@@ -51,8 +51,8 @@ export class TemplatesController {
   async validateRoll(@UploadedFile() file?: Express.Multer.File, @Body('refType') refType?: string) {
     if (!file) throw new BadRequestException('Adjunta el archivo en el campo "file"');
     const type = refType === 'RUT' ? 'RUT' : 'CODE';
-    const { errors, summary } = await this.voters.validateRoll(file.buffer, file.originalname, type);
-    return { ...summary, errors };
+    const { errors, warnings, summary } = await this.voters.validateRoll(file.buffer, file.originalname, type);
+    return { ...summary, errors, warnings };
   }
 
   /** Lee candidatos agrupados por cargo, para rellenar el formulario antes de crear. */

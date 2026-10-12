@@ -21,6 +21,7 @@ import { AnnulmentsController } from './annulments/annulments.controller';
 import { AnnulmentsService } from './annulments/annulments.service';
 import { SchedulerService } from './scheduler/scheduler.service';
 import { TemplatesController } from './imports/templates.controller';
+import { env } from './common/env';
 
 /**
  * Módulo raíz. En una app más grande cada dominio tendría su propio @Module;
@@ -34,7 +35,8 @@ import { TemplatesController } from './imports/templates.controller';
     AuditModule,
     MailModule,
     ScheduleModule.forRoot(),
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+    // Límite general configurable: el panel refresca participación y consola cada 10 s por pestaña abierta
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: env.apiRateLimit }]),
   ],
   controllers: [ElectionsController, VotersController, VotingController, ResultsController, PublicResultsController, AnnulmentsController, TemplatesController],
   providers: [

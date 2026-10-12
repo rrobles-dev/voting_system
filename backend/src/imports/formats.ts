@@ -63,6 +63,30 @@ export function refKey(ref: string, type: RefType): string {
 }
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
+
+/**
+ * Clave para comparar nombres de empresa: sin tildes, mayúsculas, puntuación ni tipo societario.
+ * "Filtros Mineros S.p.A." y "filtros mineros spa" → "filtros mineros".
+ * Se usa solo para ADVERTIR: dos razones sociales de un mismo grupo pueden llamarse casi igual.
+ */
+const LEGAL_SUFFIXES = /\b(s\s*p\s*a|spa|ltda|limitada|s\s*a|eirl|sociedad anonima|y cia|cia)\b/g;
+export function nameKey(name: string): string {
+  return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[.,]/g, ' ').replace(LEGAL_SUFFIXES, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Advertencias (no errores) por nombres que parecen repetidos dentro del padrón. */
+export function nameWarnings(rows: { organization: string }[]): string[] {
+  const seen = new Map<string, number>();
+  const warnings: string[] = [];
+  rows.forEach((r, i) => {
+    const key = nameKey(r.organization);
+    if (!key) return;
+    if (seen.has(key)) warnings.push(`Fila ${i + 2}: "${r.organization}" se parece a la empresa de la fila ${seen.get(key)}`);
+    else seen.set(key, i + 2);
+  });
+  return warnings;
+}
 const YES = ['si', 'sí', 'true', 'verdadero', '1', 'x', 'yes'];
 const NO = ['no', 'false', 'falso', '0'];
 

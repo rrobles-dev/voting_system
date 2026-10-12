@@ -24,3 +24,17 @@ export function FileErrors({ errors, title }: { errors?: string[]; title?: strin
     </div>
   );
 }
+
+/** Advertencias que no bloquean: la comisión debe confirmar explícitamente que las revisó. */
+export function WarningsConfirm({ warnings, confirmed, onChange, label }: {
+  warnings?: string[]; confirmed: boolean; onChange: (v: boolean) => void; label: string;
+}) {
+  if (!warnings?.length) return null;
+  return (
+    <div className="notice warn">
+      <strong>Revisa {warnings.length > 1 ? `estas ${warnings.length} advertencias` : 'esta advertencia'}:</strong>
+      <ul>{warnings.map((w) => <li key={w}>{w}</li>)}</ul>
+      <label className="switch"><input type="checkbox" checked={confirmed} onChange={(e) => onChange(e.target.checked)} /> {label}</label>
+    </div>
+  );
+}

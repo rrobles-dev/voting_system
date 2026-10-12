@@ -13,6 +13,12 @@ class AddVoterDto {
   @IsOptional() @IsInt() @Min(1) weight?: number;
   @IsOptional() @IsBoolean() eligible?: boolean;
   @IsOptional() @IsString() reason?: string;
+  @IsOptional() @IsBoolean() confirmWarnings?: boolean;
+}
+
+class EmailDto {
+  @IsString() email: string;
+  @IsOptional() @IsString() reason?: string;
 }
 
 class EligibilityDto {
@@ -39,9 +45,11 @@ export class VotersController {
     @Param('id', ParseUUIDPipe) id: string,
     @UploadedFile() file?: Express.Multer.File,
     @Body('csv') csvText?: string,
+    @Body('confirmWarnings') confirmWarnings?: string | boolean,
   ) {
-    if (file) return this.voters.importRoll(id, file.buffer, file.originalname);
-    if (csvText) return this.voters.importRoll(id, Buffer.from(csvText, 'utf8'), 'padron.csv');
+    const confirm = confirmWarnings === true || confirmWarnings === 'true';
+    if (file) return this.voters.importRoll(id, file.buffer, file.originalname, confirm);
+    if (csvText) return this.voters.importRoll(id, Buffer.from(csvText, 'utf8'), 'padron.csv', confirm);
     throw new BadRequestException('Adjunta el padrón en el campo "file" (.xlsx o .csv)');
   }
 
@@ -55,6 +63,12 @@ export class VotersController {
   @Patch('voters/:voterId/eligibility')
   setEligibility(@Param('id', ParseUUIDPipe) id: string, @Param('voterId', ParseUUIDPipe) voterId: string, @Body() dto: EligibilityDto) {
     return this.voters.setEligibility(id, voterId, dto.eligible, dto.reason);
+  }
+
+  /** Cambiar el correo: invalida el código anterior y, con la votación abierta, envía uno nuevo. */
+  @Patch('voters/:voterId/email')
+  changeEmail(@Param('id', ParseUUIDPipe) id: string, @Param('voterId', ParseUUIDPipe) voterId: string, @Body() dto: EmailDto) {
+    return this.voters.changeEmail(id, voterId, dto.email, dto.reason);
   }
 
   /** Quitar del padrón a quien nunca votó (por ejemplo, un registro duplicado). */

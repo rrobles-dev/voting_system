@@ -173,6 +173,7 @@ tr:last-child td { border-bottom: none; }
 .console { list-style: none; padding: 0; margin: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); max-height: 480px; overflow-y: auto; }
 .console li { display: grid; grid-template-columns: 170px 1fr auto auto; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 0.9rem; align-items: center; }
 .console time { color: var(--muted); }
+.console .event-detail { display: block; font-size: 0.82rem; color: var(--muted); }
 .console .actor { font-size: 0.78rem; color: var(--muted); }
 .console .hash { font-size: 0.78rem; color: var(--muted); }
 

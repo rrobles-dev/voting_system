@@ -1,6 +1,13 @@
 /** Cliente HTTP mínimo. Normaliza los errores de NestJS en un mensaje legible. */
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public details?: string[]) {
+  constructor(
+    public status: number,
+    message: string,
+    public details?: string[],
+    /** Advertencias que no bloquean pero exigen confirmación explícita (HTTP 409). */
+    public warnings?: string[],
+    public needsConfirmation = false,
+  ) {
     super(message);
   }
 }
@@ -29,7 +36,7 @@ async function request<T>(method: string, path: string, body?: unknown, admin = 
   if (!res.ok) {
     if (res.status === 429) throw new ApiError(429, 'Demasiados intentos. Espera un minuto e inténtalo de nuevo.');
     const msg = Array.isArray(data?.message) ? data.message.join('. ') : data?.message ?? 'Error inesperado';
-    throw new ApiError(res.status, msg, data?.errors);
+    throw new ApiError(res.status, msg, data?.errors, data?.warnings, Boolean(data?.needsConfirmation));
   }
   return data as T;
 }
@@ -48,7 +55,7 @@ export const api = {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const msg = Array.isArray(data?.message) ? data.message.join('. ') : data?.message ?? 'Error inesperado';
-      throw new ApiError(res.status, msg, data?.errors);
+      throw new ApiError(res.status, msg, data?.errors, data?.warnings, Boolean(data?.needsConfirmation));
     }
     return data as T;
   },

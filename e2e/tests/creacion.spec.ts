@@ -203,3 +203,65 @@ test('bug reportado: agregar un votante con el mismo RUT escrito distinto o el m
   await page.getByRole('button', { name: 'Agregar', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('ya está asignado a Filtros Mineros SpA');
 });
+
+test('padrón con nombres parecidos: exige confirmar la advertencia antes de crear', async ({ page }, info) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Nuevo proceso' }).click();
+  await fillBasics(page, `Parecidos ${info.project.name} ${Date.now()}`);
+  const cargo1 = page.getByRole('group', { name: 'Cargo 1' });
+  await cargo1.getByLabel('Nombre', { exact: true }).fill('Directorio');
+  await fillCargo(cargo1, '1', '1', '1');
+  await cargo1.getByRole('textbox').last().fill('Ana\nBeto');
+  await page.getByLabel('Archivo de padrón').setInputFiles(fixture('padron-nombres-parecidos.csv'));
+  await expect(page.getByText('"FILTROS MINEROS S.A." se parece a la empresa de la fila 2')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Revisar antes de crear' }).click();
+  await expect(page.getByRole('alert')).toContainText('nombres parecidos');
+  await page.getByLabel('Las revisé: son empresas distintas').check();
+  await page.getByRole('button', { name: 'Revisar antes de crear' }).click();
+  await page.getByRole('button', { name: 'Confirmar y crear proceso' }).click();
+  await expect(page.getByText('3 en el padrón (3 habilitados)')).toBeVisible();
+  await page.getByRole('tab', { name: 'Consola' }).click();
+  await expect(page.getByText('1 advertencia(s) confirmada(s)')).toBeVisible();
+});
+
+test('cambiar correo, nombre parecido y quitar: todo queda en la consola con su motivo', async ({ page }, info) => {
+  const { api, id } = await draftViaApi(`Trazabilidad ${info.project.name} ${Date.now()}`);
+  await api.post(`${API}/admin/elections/${id}/voters`, { headers: ADMIN, data: { ref: 'S1', organization: 'Filtros Mineros SpA', email: 'filtros@example.org' } });
+  await api.post(`${API}/admin/elections/${id}/voters`, { headers: ADMIN, data: { ref: 'S2', organization: 'Duplicado Ltda', email: 'dup@example.org' } });
+  await api.post(`${API}/admin/elections/${id}/open`, { headers: ADMIN });
+  await login(page, `/admin/${id}`);
+
+  // Nombre parecido: advierte y permite confirmar
+  await page.getByRole('button', { name: '+ Agregar votante' }).click();
+  await page.getByLabel('RUT o ID').fill('S3');
+  await page.getByLabel('Empresa').fill('FILTROS MINEROS S.A.');
+  await page.getByLabel('Correo').fill('filtros2@example.org');
+  await page.getByLabel(/^Motivo/).fill('Segunda razón social del grupo, socia');
+  await page.getByRole('button', { name: 'Agregar', exact: true }).click();
+  await expect(page.getByText('se parece a "Filtros Mineros SpA"')).toBeVisible();
+  await page.getByRole('button', { name: 'Son empresas distintas: agregar' }).click();
+  await expect(page.getByText('FILTROS MINEROS S.A. agregada')).toBeVisible();
+
+  // Cambiar correo con motivo
+  await page.getByRole('row', { name: /Filtros Mineros SpA/ }).getByRole('button', { name: 'Cambiar correo' }).click();
+  const panel = page.getByRole('dialog', { name: 'Cambiar el correo de Filtros Mineros SpA' });
+  await panel.getByLabel(/Correo nuevo/).fill('nuevo.representante@example.org');
+  await panel.getByLabel(/^Motivo/).fill('Cambió el representante de la empresa');
+  await panel.getByRole('button', { name: 'Cambiar correo' }).click();
+  await expect(page.getByText('Correo de Filtros Mineros SpA actualizado; se le envió un código nuevo')).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'nuevo.representante@example.org' })).toBeVisible();
+
+  // Quitar con motivo
+  await page.getByRole('row', { name: /Duplicado Ltda/ }).getByRole('button', { name: 'Quitar' }).click();
+  const remove = page.getByRole('dialog', { name: 'Quitar a Duplicado Ltda del padrón' });
+  await remove.getByLabel(/^Motivo/).fill('Registro duplicado por error de carga');
+  await remove.getByRole('button', { name: 'Quitar del padrón' }).click();
+  await expect(page.getByText('Duplicado Ltda quitada del padrón')).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Consola' }).click();
+  await expect(page.getByText('filtros@example.org → nuevo.representante@example.org')).toBeVisible();
+  await expect(page.getByText('Motivo: Cambió el representante de la empresa')).toBeVisible();
+  await expect(page.getByText('Motivo: Registro duplicado por error de carga')).toBeVisible();
+  await expect(page.getByText('parecida a Filtros Mineros SpA')).toBeVisible();
+});
