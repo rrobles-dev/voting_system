@@ -6,6 +6,7 @@ import { VoterFlow } from './pages/VoterFlow';
 import { VerifyReceipt } from './pages/VerifyReceipt';
 import { AdminElections, AdminLogin } from './pages/AdminElections';
 import { AdminElection } from './pages/AdminElection';
+import { PublicResults } from './pages/PublicResults';
 import './styles.css';
 
 /** Protege las rutas de admin: sin clave en la sesión, muestra el login. */
@@ -29,6 +30,7 @@ createRoot(document.getElementById('root')!).render(
       <Routes>
         <Route path="/" element={<VoterFlow />} />
         <Route path="/verificar" element={<VerifyReceipt />} />
+        <Route path="/resultados/:id" element={<PublicResults />} />
         <Route path="/admin" element={<AdminGate><AdminElections /></AdminGate>} />
         <Route path="/admin/:id" element={<AdminGate><AdminElection /></AdminGate>} />
       </Routes>

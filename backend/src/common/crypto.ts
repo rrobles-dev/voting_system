@@ -59,3 +59,14 @@ export function decrypt(payload: string, keyHex: string): string {
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
 }
+
+/**
+ * JSON canónico (claves ordenadas). Postgres jsonb NO conserva el orden de las claves,
+ * así que sin esto el hash calculado al leer no coincidiría con el calculado al escribir.
+ */
+export function canonical(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  const o = v as Record<string, unknown>;
+  return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(',')}}`;
+}

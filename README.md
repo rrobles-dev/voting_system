@@ -31,11 +31,24 @@ El votante recibe un **código de recibo**. Con él puede verificar que su voto 
 - Apertura y cierre automáticos por fecha, con avisos por correo.
 - **Sin tendencias durante la votación**: la API rechaza consultar resultados si el proceso no está cerrado. Durante la votación solo se ve la participación (quién votó, no qué).
 - Recordatorios a quienes no han votado y reemisión de código (invalida el anterior).
-- Empates en el último cupo: el sistema los **detecta y marca**; se resuelven fuera del sistema según el reglamento.
+- Empates en el último cupo: el sistema los **detecta y marca**; se resuelven fuera del sistema según el reglamento y el admin registra el resultado.
 - Anulación con **control dual**: la solicita el Admin con el recibo del votante y la aprueba el Auditor. La boleta no se borra, queda anulada, y el votante recibe un código nuevo.
 - Log de auditoría **encadenado por hash**: alterar o borrar un evento rompe la cadena y el sistema lo detecta.
 - IP y user-agent cifrados (AES-256-GCM). Solo el Auditor los descifra, indicando un motivo que queda registrado.
 - Reportes CSV: resultados, boletas para recuento manual (sin votante) y participación.
+
+### Del cierre al resultado oficial
+
+| Estado | Qué ve la comisión | Qué puede hacer |
+|---|---|---|
+| **Cerrada** | Conteo **preliminar**, calculado en vivo desde las boletas | Revisar, verificar, publicar el escrutinio |
+| **Escrutada** | El **acta oficial**: copia congelada con huella SHA-256 | Descargar el acta, verificarla, resolver empates, comunicar |
+
+- **Publicar el escrutinio** siempre congela el acta v1 y registra su hash en la cadena de auditoría. Si hay empate, el acta lo deja como *pendiente*.
+- **Resolver un empate** (decidido fuera del sistema) genera un **acta complementaria** encadenada a la anterior, con el fundamento escrito. Las actas nunca se editan.
+- **Verificar acta vs. boletas** recalcula el conteo desde las boletas y lo compara con el acta: si alguien altera la base después de publicar, aparece la diferencia exacta.
+- **Notificar a los socios** y **habilitar resultados públicos** son acciones manuales, bloqueadas mientras haya empates pendientes: no se comunica un resultado que aún no es definitivo.
+- Los resultados públicos se insertan en cualquier web con un `<iframe>` (`/resultados/:id`) o se consumen como JSON (`/api/public/elections/:id/results`, CORS abierto). Solo exponen el acta oficial definitiva.
 
 ## Stack y por qué
 
@@ -100,7 +113,9 @@ cd backend && npm test              # unitarias: generación de códigos, hash, 
 cd e2e
 npm install
 npx playwright install chromium
-npx playwright test                 # E2E en móvil, tablet y escritorio (backend corriendo con EXPOSE_CODES=true)
+npx playwright test                 # E2E en móvil, tablet y escritorio
+# El backend debe correr con EXPOSE_CODES=true y VOTING_RATE_LIMIT=1000:
+# la suite completa hace más intentos por minuto desde una sola IP que los que permite el límite normal.
 npx playwright show-report
 ```
 
@@ -115,7 +130,12 @@ npx playwright show-report
 | POST | `/api/admin/elections/:id/voters/import` | Admin |
 | POST | `/api/admin/elections/:id/codes/issue` | Admin |
 | POST | `/api/admin/elections/:id/voters/:voterId/reissue` | Admin |
-| POST | `/api/admin/elections/:id/open` · `/close` · `/tally` | Admin |
+| POST | `/api/admin/elections/:id/open` · `/close` | Admin |
+| POST | `/api/admin/elections/:id/tally` (publica escrutinio + acta v1) | Admin |
+| POST | `/api/admin/elections/:id/ties/resolve` | Admin |
+| GET | `/api/admin/elections/:id/actas` · `/actas/verify` · `/actas/:version/acta.html` | Admin, Auditor |
+| POST | `/api/admin/elections/:id/notify-members` · `/public-results` | Admin |
+| GET | `/api/public/elections/:id/results` | público (si está habilitado) |
 | POST | `/api/admin/elections/:id/reminders` | Admin |
 | GET | `/api/admin/elections/:id/participation` | Admin, Auditor |
 | GET | `/api/admin/elections/:id/results` | Admin, Auditor (solo cerrada) |
@@ -126,5 +146,5 @@ npx playwright show-report
 
 ## Hoja de ruta
 
-- **v2**: textos, colores y logo configurables por proceso; asistente de configuración con plantillas; ponderación de votos sin riesgo de reidentificación; informe PDF y presentación de resultados; Keycloak/JWT; purga automática según `retentionDays`.
+- **v2**: textos, colores y logo configurables por proceso (también en la página insertable); asistente de configuración con plantillas; ponderación de votos sin riesgo de reidentificación; acta en PDF y presentación de resultados; Keycloak/JWT; purga automática según `retentionDays`.
 - **v3**: resumen narrativo del proceso generado con IA para el informe final.

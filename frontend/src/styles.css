@@ -188,6 +188,29 @@ tr:last-child td { border-bottom: none; }
 .annulments { list-style: none; padding: 0; margin: 0; }
 .annulments li { border-top: 1px solid var(--border); padding: 10px 0; }
 
+/* Acta y publicación */
+.acta-card { border-color: var(--accent); }
+.acta-head { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.acta-card h3, .tie-box h3 { font-size: 1.05rem; margin: 20px 0 8px; }
+.hash { display: block; font-size: 0.78rem; color: var(--muted); word-break: break-all; margin-top: 4px; }
+.switch { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-weight: 600; }
+.switch input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+.embed textarea { font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem; }
+.tie-box { border-top: 1px dashed var(--warn); margin-top: 16px; padding-top: 4px; }
+.tie-box .candidates { margin-bottom: 12px; }
+
+/* Página pública insertable */
+.public { max-width: 640px; margin: 0 auto; padding: 20px 16px; }
+.public h1 { margin-bottom: 4px; }
+.public-position { margin-top: 20px; }
+.public-position h2 { border-bottom: 2px solid var(--accent); padding-bottom: 4px; }
+.elected, .others { list-style: none; padding: 0; margin: 8px 0; }
+.elected li, .others li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.elected li span:first-child { font-weight: 600; }
+.votes { color: var(--muted); white-space: nowrap; }
+.public details summary { cursor: pointer; color: var(--muted); }
+.hash-line { font-size: 0.78rem; color: var(--muted); margin-top: 24px; }
+
 /* Móvil */
 @media (max-width: 640px) {
   body { font-size: 16px; }

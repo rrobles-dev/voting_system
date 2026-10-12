@@ -31,6 +31,9 @@ export class Election {
   @Column({ default: 9 }) codeLength: number;
   @Column({ type: 'int', nullable: true }) quorumPercent: number | null; // null = sin quórum
   @Column({ default: 90 }) retentionDays: number;
+  // Publicación posterior al escrutinio: acciones manuales, bloqueadas si hay empates pendientes
+  @Column({ type: 'timestamptz', nullable: true }) membersNotifiedAt: Date | null;
+  @Column({ default: false }) publicResults: boolean;
   @CreateDateColumn({ type: 'timestamptz' }) createdAt: Date;
 
   @OneToMany(() => Position, (p) => p.election, { cascade: true }) positions: Position[];
@@ -138,6 +141,31 @@ export class Annulment {
   @Column({ type: 'timestamptz', nullable: true }) resolvedAt: Date | null;
 }
 
+export enum ActaKind {
+  ESCRUTINIO = 'ESCRUTINIO',             // acta inicial, al publicar el escrutinio
+  RESOLUCION_EMPATE = 'RESOLUCION_EMPATE', // acta complementaria con un empate resuelto fuera del sistema
+}
+
+/**
+ * Acta oficial: copia congelada de los resultados con su hash.
+ * Nunca se edita. Resolver un empate crea una versión nueva que referencia
+ * el hash de la anterior (prevHash), igual que la cadena de auditoría.
+ */
+@Entity()
+@Unique(['electionId', 'version'])
+export class Acta {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Column() electionId: string;
+  @ManyToOne(() => Election, { onDelete: 'CASCADE' }) election: Election;
+  @Column() version: number;
+  @Column({ type: 'enum', enum: ActaKind }) kind: ActaKind;
+  @Column({ type: 'jsonb' }) snapshot: Record<string, unknown>;
+  @Column({ type: 'varchar', nullable: true }) prevHash: string | null;
+  @Column() hash: string; // SHA-256 del snapshot canónico + prevHash
+  @Column() pendingTies: boolean;
+  @CreateDateColumn({ type: 'timestamptz' }) createdAt: Date;
+}
+
 /** Log encadenado: cada evento incluye el hash del anterior. */
 @Entity()
 export class AuditEvent {
@@ -152,5 +180,5 @@ export class AuditEvent {
 }
 
 export const ENTITIES = [
-  Election, Position, Candidate, Voter, AccessCode, Participation, Ballot, BallotSelection, Annulment, AuditEvent,
+  Election, Position, Candidate, Voter, AccessCode, Participation, Ballot, BallotSelection, Annulment, Acta, AuditEvent,
 ];

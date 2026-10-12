@@ -15,6 +15,8 @@ import { VotingController } from './voting/voting.controller';
 import { VotingService } from './voting/voting.service';
 import { ResultsController } from './results/results.controller';
 import { ResultsService } from './results/results.service';
+import { ActasService } from './results/actas.service';
+import { PublicResultsController } from './results/public.controller';
 import { AnnulmentsController } from './annulments/annulments.controller';
 import { AnnulmentsService } from './annulments/annulments.service';
 import { SchedulerService } from './scheduler/scheduler.service';
@@ -33,9 +35,9 @@ import { SchedulerService } from './scheduler/scheduler.service';
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
   ],
-  controllers: [ElectionsController, VotersController, VotingController, ResultsController, AnnulmentsController],
+  controllers: [ElectionsController, VotersController, VotingController, ResultsController, PublicResultsController, AnnulmentsController],
   providers: [
-    ElectionsService, VotersService, VotingService, ResultsService, AnnulmentsService, SchedulerService,
+    ElectionsService, VotersService, VotingService, ResultsService, ActasService, AnnulmentsService, SchedulerService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],

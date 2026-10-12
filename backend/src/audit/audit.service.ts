@@ -1,20 +1,9 @@
 import { Global, Injectable, Module } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { AuditEvent } from '../database/entities';
-import { sha256 } from '../common/crypto';
+import { canonical, sha256 } from '../common/crypto';
 
 const GENESIS = '0'.repeat(64);
-
-/**
- * JSON canónico (claves ordenadas). Postgres jsonb NO conserva el orden de las claves,
- * así que sin esto el hash calculado al leer no coincidiría con el calculado al escribir.
- */
-function canonical(v: unknown): string {
-  if (v === null || typeof v !== 'object') return JSON.stringify(v);
-  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
-  const o = v as Record<string, unknown>;
-  return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(',')}}`;
-}
 
 /**
  * Log de auditoría encadenado (idea similar a un blockchain, sin la parte distribuida).

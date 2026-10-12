@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, ApiError } from '../api/client';
-import type { Annulment, AuditEvent, Election, ParticipationReport, Results } from '../api/types';
+import type { ActaVerification, Annulment, AuditEvent, Election, ParticipationReport, Results } from '../api/types';
 import { STATUS_LABEL } from './AdminElections';
 
 type Tab = 'participacion' | 'consola' | 'resultados' | 'padron' | 'anulaciones';
@@ -10,7 +10,9 @@ type Tab = 'participacion' | 'consola' | 'resultados' | 'padron' | 'anulaciones'
 const EVENT_LABEL: Record<string, string> = {
   ELECTION_CREATED: 'Proceso creado', ROLL_IMPORTED: 'Padrón importado', CODE_ISSUED: 'Código emitido',
   CODE_REISSUED: 'Código reemitido', ELECTION_OPEN: 'Votación abierta', ELECTION_CLOSED: 'Votación cerrada',
-  ELECTION_TALLIED: 'Escrutinio publicado', VOTE_CAST: 'Voto recibido', REMINDERS_SENT: 'Recordatorios enviados',
+  ELECTION_TALLIED: 'Escrutinio publicado', ACTA_ISSUED: 'Acta oficial emitida', TIE_RESOLVED: 'Empate resuelto (acta complementaria)',
+  MEMBERS_NOTIFIED: 'Resultados notificados a los socios', PUBLIC_RESULTS_ENABLED: 'Resultados públicos habilitados',
+  PUBLIC_RESULTS_DISABLED: 'Resultados públicos deshabilitados', VOTE_CAST: 'Voto recibido', REMINDERS_SENT: 'Recordatorios enviados',
   ANNULMENT_REQUESTED: 'Anulación solicitada', ANNULMENT_APPROVED: 'Anulación aprobada',
   ANNULMENT_REJECTED: 'Anulación rechazada', AUDIT_REPORT_ACCESSED: 'Reporte de auditoría consultado',
 };
@@ -64,7 +66,7 @@ export function AdminElection() {
               <button className="btn danger" onClick={() => confirm('¿Cerrar la votación ahora? No se puede reabrir.') && action('/close', 'Votación cerrada')}>Cerrar ahora</button>
             </>
           )}
-          {election.status === 'CLOSED' && <button className="btn primary" onClick={() => action('/tally', 'Escrutinio publicado')}>Publicar escrutinio</button>}
+          {election.status === 'CLOSED' && <button className="btn primary" onClick={() => action('/tally', 'Escrutinio publicado: acta oficial v1 emitida', () => setTab('resultados'))}>Publicar escrutinio</button>}
         </div>
       </header>
       {flash && <p className={`notice ${flash.kind === 'ok' ? 'ok' : 'warn'}`} role="status">{flash.text}</p>}
@@ -87,7 +89,7 @@ export function AdminElection() {
 
       {tab === 'participacion' && <ParticipationTab id={id!} onReissue={(org) => setFlash({ kind: 'ok', text: `Código nuevo enviado a ${org}` })} />}
       {tab === 'consola' && <ConsoleTab id={id!} />}
-      {tab === 'resultados' && (closed ? <ResultsTab id={id!} /> : (
+      {tab === 'resultados' && (closed ? <ResultsTab key={election.status} id={id!} /> : (
         <p className="notice">Los resultados se habilitan al cierre. Durante la votación el sistema no permite consultar conteos ni tendencias.</p>
       ))}
       {tab === 'padron' && <RollTab election={election} onDone={load} />}
@@ -189,15 +191,89 @@ function ConsoleTab({ id }: { id: string }) {
 
 function ResultsTab({ id }: { id: string }) {
   const [r, setR] = useState<Results | null>(null);
-  useEffect(() => { api.get<Results>(`/admin/elections/${id}/results`, true).then(setR); }, [id]);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'warn'; text: string } | null>(null);
+  const [check, setCheck] = useState<ActaVerification | null>(null);
+  const load = useCallback(() => api.get<Results>(`/admin/elections/${id}/results`, true).then(setR), [id]);
+  useEffect(() => { load(); }, [load]);
   if (!r) return <p>Cargando…</p>;
+
+  async function run(fn: () => Promise<unknown>, ok: string) {
+    setMsg(null);
+    try { await fn(); setMsg({ kind: 'ok', text: ok }); await load(); } catch (e) { setMsg({ kind: 'warn', text: (e as ApiError).message }); }
+  }
+
   // SVG no resuelve var(--x) en el atributo fill: leemos el valor real de la variable CSS.
   // Así el gráfico respeta el tema (claro/oscuro) y, en v2, la marca configurada.
   const css = getComputedStyle(document.documentElement);
   const v = (name: string) => css.getPropertyValue(name).trim();
   const color = { ELECTED: v('--accent'), TIED: v('--warn'), NOT_ELECTED: v('--muted-bar') };
+  const official = r.source === 'ACTA' && r.acta;
+  const pending = official ? r.acta!.pendingTies : false;
+  const embedUrl = `${window.location.origin}/resultados/${id}`;
+  const embedCode = `<iframe src="${embedUrl}" title="Resultados oficiales" style="width:100%;min-height:520px;border:0"></iframe>`;
+
   return (
     <section>
+      {/* Origen del dato: conteo preliminar (cerrada) o acta oficial (escrutada) */}
+      {official ? (
+        <div className="card wide acta-card">
+          <div className="acta-head">
+            <div>
+              <h2>Acta oficial · versión {r.acta!.version}</h2>
+              <p className="muted small">
+                {r.acta!.kind === 'RESOLUCION_EMPATE' ? 'Acta complementaria con resolución de empate · ' : ''}
+                Emitida {new Date(r.acta!.createdAt).toLocaleString('es-CL')}
+              </p>
+              <code className="hash" title="Huella digital SHA-256 del acta">{r.acta!.hash}</code>
+            </div>
+            <div className="toolbar">
+              <button className="btn small" onClick={() => api.download(`/admin/elections/${id}/actas/${r.acta!.version}/acta.html`, `acta-v${r.acta!.version}.html`)}>
+                Descargar acta
+              </button>
+              <button className="btn small" onClick={() => api.get<ActaVerification>(`/admin/elections/${id}/actas/verify`, true).then(setCheck)}>
+                Verificar acta vs. boletas
+              </button>
+            </div>
+          </div>
+          {check && (
+            <div className={`notice ${check.chainOk && check.recountMatches ? 'ok' : 'warn'}`}>
+              {!check.chainOk ? `La cadena de actas está alterada (versión ${check.brokenAtVersion}).`
+                : check.recountMatches ? 'Cadena de actas íntegra y el recuento de boletas coincide con el acta.'
+                : <>El recuento NO coincide con el acta:<ul>{check.differences.map((d) => <li key={d.candidate}>{d.position} · {d.candidate}: acta {d.acta}, recuento {d.recount}</li>)}</ul></>}
+            </div>
+          )}
+
+          <h3>Comunicar resultados</h3>
+          {pending && <p className="notice warn">Hay empates pendientes. Registra su resolución abajo para habilitar la notificación y la publicación.</p>}
+          <div className="toolbar">
+            <button className="btn primary" disabled={pending || Boolean(r.publication?.membersNotifiedAt)}
+              onClick={() => confirm('¿Enviar los resultados oficiales por correo a todos los socios del padrón?') &&
+                run(() => api.post(`/admin/elections/${id}/notify-members`, {}, true), 'Resultados enviados a los socios')}>
+              {r.publication?.membersNotifiedAt ? `Socios notificados el ${new Date(r.publication.membersNotifiedAt).toLocaleString('es-CL')}` : 'Notificar a los socios'}
+            </button>
+            <label className="switch">
+              <input type="checkbox" disabled={pending} checked={Boolean(r.publication?.publicResults)}
+                onChange={(e) => run(() => api.post(`/admin/elections/${id}/public-results`, { enabled: e.target.checked }, true),
+                  e.target.checked ? 'Resultados públicos habilitados' : 'Resultados públicos deshabilitados')} />
+              Resultados públicos e insertables
+            </label>
+          </div>
+          {r.publication?.publicResults && (
+            <div className="embed">
+              <p className="help">Pega este código en la web de la organización. Muestra solo el acta oficial definitiva:</p>
+              <textarea readOnly rows={3} value={embedCode} onFocus={(e) => e.target.select()} />
+              <p className="help">
+                Vista previa: <a href={embedUrl} target="_blank" rel="noreferrer">{embedUrl}</a> · Datos en JSON para un diseño propio:{' '}
+                <code>/api/public/elections/{id}/results</code>
+              </p>
+            </div>
+          )}
+          {msg && <p className={`notice ${msg.kind}`}>{msg.text}</p>}
+        </div>
+      ) : (
+        <p className="notice">Conteo <strong>preliminar</strong>. Al publicar el escrutinio se congela el acta oficial con su huella digital.</p>
+      )}
+
       <div className="stats">
         <div className="stat"><span className="stat-value">{r.validBallots}</span><span className="stat-label">boletas válidas</span></div>
         <div className="stat"><span className="stat-value">{r.annulledBallots}</span><span className="stat-label">anuladas</span></div>
@@ -205,13 +281,14 @@ function ResultsTab({ id }: { id: string }) {
       {r.positions.map((p) => (
         <div key={p.id} className="card wide result">
           <h2>{p.name} <span className="muted">· {p.seats} cupos</span></h2>
-          {p.tie && <p className="notice warn">Empate en el último cupo entre los candidatos marcados. Se resuelve fuera del sistema según el reglamento.</p>}
+          {p.tie && !p.resolution && <p className="notice warn">Empate en el último cupo entre los candidatos marcados. Se resuelve fuera del sistema según el reglamento.</p>}
+          {p.resolution && <p className="notice ok"><strong>Empate resuelto:</strong> {p.resolution.note}</p>}
           <div className="chart" style={{ height: Math.max(180, p.ranking.length * 40) }}>
             <ResponsiveContainer>
               <BarChart data={p.ranking} layout="vertical" margin={{ left: 8, right: 24 }}>
                 <XAxis type="number" allowDecimals={false} />
                 <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 13 }} />
-                <Tooltip formatter={(v) => [`${v} votos`, '']} />
+                <Tooltip formatter={(val) => [`${val} votos`, '']} />
                 <Bar dataKey="votes" radius={[0, 4, 4, 0]} isAnimationActive={false}>
                   {p.ranking.map((c) => <Cell key={c.candidateId} fill={color[c.status]} />)}
                 </Bar>
@@ -225,15 +302,61 @@ function ResultsTab({ id }: { id: string }) {
                 {p.ranking.map((c, i) => (
                   <tr key={c.candidateId}>
                     <td>{i + 1}</td><td>{c.name}</td><td>{c.votes}</td>
-                    <td><span className={`badge ${c.status}`}>{{ ELECTED: 'Electo', TIED: 'Empate', NOT_ELECTED: 'No electo' }[c.status]}</span></td>
+                    <td>
+                      <span className={`badge ${c.status}`}>{{ ELECTED: 'Electo', TIED: 'Empate', NOT_ELECTED: 'No electo' }[c.status]}</span>
+                      {c.byResolution && <span className="muted small"> por resolución</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {official && p.tie && !p.resolution && <TieResolution electionId={id} position={p} onDone={() => run(async () => undefined, 'Acta complementaria emitida')} />}
         </div>
       ))}
     </section>
+  );
+}
+
+/** Registra un empate resuelto fuera del sistema. Genera un acta complementaria. */
+function TieResolution({ electionId, position, onDone }: { electionId: string; position: Results['positions'][number]; onDone: () => void }) {
+  const tied = position.ranking.filter((c) => c.status === 'TIED');
+  const remaining = position.seats - position.ranking.filter((c) => c.status === 'ELECTED').length;
+  const [winners, setWinners] = useState<string[]>([]);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const toggle = (cid: string) => setWinners((w) => (w.includes(cid) ? w.filter((x) => x !== cid) : w.length < remaining ? [...w, cid] : w));
+
+  async function submit() {
+    setError(null);
+    if (!confirm('Esto emite un acta complementaria que no se puede modificar. ¿Continuar?')) return;
+    try {
+      await api.post(`/admin/elections/${electionId}/ties/resolve`, { positionId: position.id, winners, note }, true);
+      onDone();
+    } catch (e) {
+      setError((e as ApiError).message);
+    }
+  }
+
+  return (
+    <div className="tie-box">
+      <h3>Registrar resolución del empate</h3>
+      <p className="help">Queda{remaining > 1 ? 'n' : ''} {remaining} cupo{remaining > 1 ? 's' : ''} por asignar. Marca a quién{remaining > 1 ? 'es' : ''} se le asignó según el proceso definido fuera del sistema.</p>
+      <div className="candidates">
+        {tied.map((c) => (
+          <label key={c.candidateId} className={`candidate ${winners.includes(c.candidateId) ? 'checked' : ''}`}>
+            <input type="checkbox" checked={winners.includes(c.candidateId)} onChange={() => toggle(c.candidateId)}
+              disabled={!winners.includes(c.candidateId) && winners.length >= remaining} />
+            <span className="candidate-name">{c.name}</span>
+          </label>
+        ))}
+      </div>
+      <label>Fundamento (queda en el acta)
+        <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ej.: Candidata X cede el cupo de mutuo acuerdo, según acta de comisión del 12-10." />
+      </label>
+      {error && <p className="error" role="alert">{error}</p>}
+      <button className="btn primary" disabled={winners.length !== remaining || note.trim().length < 10} onClick={submit}>Emitir acta complementaria</button>
+    </div>
   );
 }
 

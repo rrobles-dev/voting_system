@@ -10,11 +10,13 @@ import { CreateElectionDto } from './elections.dto';
  * Máquina de estados de una elección. Solo se permiten estas transiciones:
  *   DRAFT → OPEN → CLOSED → TALLIED
  * Cualquier otra (p. ej. reabrir una cerrada) se rechaza.
+ * CLOSED → TALLIED no pasa por aquí: lo hace ActasService.publish, porque
+ * escrutar sin congelar el acta no debe ser posible.
  */
 const TRANSITIONS: Record<ElectionStatus, ElectionStatus[]> = {
   DRAFT: [ElectionStatus.OPEN],
   OPEN: [ElectionStatus.CLOSED],
-  CLOSED: [ElectionStatus.TALLIED],
+  CLOSED: [],
   TALLIED: [],
 };
 

@@ -8,6 +8,8 @@ import { env } from '../common/env';
 import { tallyPosition } from './tally';
 
 const csvCell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+export type LiveResults = Awaited<ReturnType<ResultsService['liveResults']>>;
+
 const toCsv = (rows: unknown[][]) => '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\n'); // BOM: Excel lee bien los acentos
 
 @Injectable()
@@ -23,10 +25,11 @@ export class ResultsService {
   }
 
   /**
-   * Resultados SOLO con la elección cerrada. Mientras está abierta no hay forma
-   * de consultar conteos: es una garantía del sistema, no una opción de la UI.
+   * Conteo en vivo desde las boletas, SOLO con la elección cerrada.
+   * Mientras está abierta no hay forma de consultar conteos: es una garantía del sistema,
+   * no una opción de la UI. Tras publicar el escrutinio, la fuente oficial pasa a ser el acta.
    */
-  async results(electionId: string) {
+  async liveResults(electionId: string) {
     const election = await this.assertClosed(electionId);
 
     // SELECT s.candidateId, COUNT(*) FROM ballot_selection s JOIN ballot b ... GROUP BY s.candidateId
@@ -59,14 +62,10 @@ export class ResultsService {
     };
   }
 
-  /** Declara escrutada la elección. Queda registrado quién y cuándo. */
-  async tally(electionId: string) {
-    await this.elections.transition(electionId, ElectionStatus.TALLIED, 'ADMIN');
-    return this.results(electionId);
-  }
-
-  async resultsCsv(electionId: string) {
-    const r = await this.results(electionId);
+  /** Recibe los resultados ya resueltos (en vivo o del acta) para que el CSV refleje la fuente oficial. */
+  resultsCsv(r: Pick<LiveResults, 'validBallots' | 'annulledBallots'> & {
+    positions: { name: string; seats: number; ranking: { name: string; votes: number; status: string }[] }[];
+  }) {
     const rows: unknown[][] = [['cargo', 'cupos', 'candidato', 'votos', 'estado']];
     for (const p of r.positions) for (const c of p.ranking) rows.push([p.name, p.seats, c.name, c.votes, c.status]);
     rows.push([], ['boletas válidas', r.validBallots], ['boletas anuladas', r.annulledBallots]);

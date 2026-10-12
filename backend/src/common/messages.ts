@@ -42,6 +42,22 @@ Por eso este correo no incluye tu selección.`,
       subject: `Cerrada la votación: ${title}`,
       body: `El proceso "${title}" ha cerrado. La comisión publicará los resultados próximamente. Gracias por participar.`,
     }),
+    officialResults: (
+      snap: { election: { title: string }; participation: { voted: number; eligible: number; percent: number };
+        positions: { name: string; ranking: { name: string; votes: number; status: string }[] }[] },
+      version: number, hash: string,
+    ) => ({
+      subject: `Resultados oficiales: ${snap.election.title}`,
+      body: `La comisión electoral informa los resultados oficiales de "${snap.election.title}".
+
+Participación: ${snap.participation.voted} de ${snap.participation.eligible} empresas habilitadas (${snap.participation.percent}%).
+
+${snap.positions.map((p) => `${p.name} - electos:\n${p.ranking.filter((c) => c.status === 'ELECTED').map((c) => `  · ${c.name} (${c.votes} votos)`).join('\n')}`).join('\n\n')}
+
+Acta oficial versión ${version}. Huella digital (SHA-256): ${hash}
+
+Gracias por participar.`,
+    }),
     reminder: (title: string, closesAt: Date) => ({
       subject: `Recordatorio: aún no has votado en ${title}`,
       body: `Te recordamos que la votación "${title}" cierra el ${fmt(closesAt)}. Tu participación es importante.`,

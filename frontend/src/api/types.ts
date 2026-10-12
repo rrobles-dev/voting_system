@@ -19,12 +19,24 @@ export interface ParticipationReport {
   voters: { id: string; ref: string; organization: string; email: string; eligible: boolean; votedAt: string | null }[];
 }
 export interface Results {
-  election: { id: string; title: string; status: ElectionStatus };
+  source: 'PRELIMINARY' | 'ACTA';
+  acta?: { version: number; kind: 'ESCRUTINIO' | 'RESOLUCION_EMPATE'; hash: string; pendingTies: boolean; createdAt: string };
+  publication?: { membersNotifiedAt: string | null; publicResults: boolean };
   validBallots: number; annulledBallots: number;
   positions: {
     id: string; name: string; seats: number; tie: boolean;
-    ranking: { candidateId: string; name: string; votes: number; status: 'ELECTED' | 'TIED' | 'NOT_ELECTED' }[];
+    ranking: { candidateId: string; name: string; votes: number; status: 'ELECTED' | 'TIED' | 'NOT_ELECTED'; byResolution?: boolean }[];
+    resolution?: { winners: string[]; note: string; resolvedAt: string };
   }[];
+}
+export interface ActaVerification {
+  chainOk: boolean; brokenAtVersion?: number; recountMatches: boolean | null;
+  differences: { position: string; candidate: string; acta: number; recount: number }[];
+}
+export interface PublicResults {
+  title: string; closedAt: string; actaVersion: number; actaHash: string; issuedAt: string;
+  participation: { eligible: number; voted: number; percent: number };
+  positions: { name: string; seats: number; elected: { name: string; votes: number }[]; others: { name: string; votes: number }[]; resolutionNote: string | null }[];
 }
 export interface AuditEvent { seq: number; type: string; actor: string; payload: Record<string, unknown>; createdAt: string; hash: string }
 export interface Annulment { id: string; voterId: string; reason: string; status: 'REQUESTED' | 'APPROVED' | 'REJECTED'; requestedAt: string }
