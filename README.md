@@ -1,5 +1,7 @@
 # Sistema de votación a distancia
 
+![CI](https://github.com/rrobles-dev/voting_system/actions/workflows/ci.yml/badge.svg)
+
 Plataforma para que una asociación gremial elija su directorio en línea: cada empresa socia recibe un código personal por correo, vota desde cualquier dispositivo y la comisión electoral obtiene resultados auditables sin poder saber por quién votó cada empresa.
 
 Reconstrucción, con datos ficticios, de un sistema que diseñé y operé en una asociación de proveedores mineros, donde la participación subió de ~70% (voto manual por mensajero) a un récord de 85%.
