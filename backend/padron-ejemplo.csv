@@ -1,0 +1,5 @@
+ref,organization,email,weight,eligible
+76.100.200-0,Aceros del Valle,socio1@example.org,1,true
+76.101.201-1,Bombas Industriales SpA,socio2@example.org,1,true
+76.102.202-2,Cables y Conductores Ltda,socio3@example.org,1,true
+76.103.203-3,Drill Tech Chile,socio4@example.org,1,false
