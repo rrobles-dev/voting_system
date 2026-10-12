@@ -12,7 +12,7 @@ export type ElectionStatus = 'DRAFT' | 'OPEN' | 'CLOSED' | 'TALLIED';
 export interface Election {
   id: string; title: string; description: string | null; status: ElectionStatus;
   opensAt: string; closesAt: string; codeLength: number; quorumPercent: number | null; positions?: Position[];
-  autoOpen: boolean; autoClose: boolean; codesOnOpen: 'ISSUE' | 'BLOCK';
+  refType: 'RUT' | 'CODE'; autoOpen: boolean; autoClose: boolean; codesOnOpen: 'ISSUE' | 'BLOCK';
 }
 export interface ParticipationReport {
   status: ElectionStatus; eligible: number; voted: number; percent: number;

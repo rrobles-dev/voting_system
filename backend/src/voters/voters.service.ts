@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { readTable } from '../imports/tabular';
-import { parseRoll } from '../imports/formats';
+import { normalizeEmail, normalizeRef, normalizeRut, parseRoll, RefType, refKey } from '../imports/formats';
 import { DataSource } from 'typeorm';
 import { AccessCode, CodeStatus, Election, ElectionStatus, Participation, Voter } from '../database/entities';
 import { AuditService } from '../audit/audit.service';
@@ -27,14 +27,14 @@ export class VotersService {
   }
 
   /** Lee y valida un padrón (Excel o CSV) sin guardar nada. Lo usa también la validación previa del formulario. */
-  async validateRoll(buffer: Buffer, filename: string) {
+  async validateRoll(buffer: Buffer, filename: string, refType: RefType = 'CODE') {
     let table;
     try {
       table = await readTable(buffer, filename, 'Padrón');
     } catch (e) {
       throw new BadRequestException(`No se pudo leer el archivo: ${(e as Error).message}`);
     }
-    const { rows, errors } = parseRoll(table);
+    const { rows, errors } = parseRoll(table, refType);
     const eligible = rows.filter((r) => r.eligible).length;
     return { rows, errors, summary: { total: rows.length, eligible, notEligible: rows.length - eligible } };
   }
@@ -48,7 +48,7 @@ export class VotersService {
     if (!election) throw new NotFoundException('Elección no encontrada');
     if (election.status !== ElectionStatus.DRAFT) throw new BadRequestException('El padrón solo se carga en estado borrador');
 
-    const { rows, errors, summary } = await this.validateRoll(buffer, filename);
+    const { rows, errors, summary } = await this.validateRoll(buffer, filename, election.refType);
     if (errors.length) throw new BadRequestException({ message: 'El padrón tiene errores', errors });
 
     await this.ds.transaction(async (em) => {
@@ -82,10 +82,15 @@ export class VotersService {
     const { rows, errors } = parseRoll({
       headers: ['rut_o_id', 'empresa', 'correo', 'peso', 'habilitado'],
       rows: [{ rut_o_id: dto.ref, empresa: dto.organization, correo: dto.email, peso: String(dto.weight ?? 1), habilitado: dto.eligible === false ? 'no' : 'si' }],
-    });
+    }, election.refType);
     if (errors.length) throw new BadRequestException({ message: 'Datos inválidos', errors: errors.map((e) => e.replace('Fila 2: ', '')) });
-    const exists = await this.ds.getRepository(Voter).findOneBy({ electionId, externalRef: rows[0].ref });
-    if (exists) throw new BadRequestException(`Ya existe un votante con el identificador ${rows[0].ref}`);
+    // Se compara contra el padrón normalizado (también los registros antiguos guardados con puntos)
+    const current = await this.ds.getRepository(Voter).findBy({ electionId });
+    const key = refKey(rows[0].ref, election.refType);
+    const sameRef = current.find((v) => refKey(v.externalRef, election.refType) === key);
+    if (sameRef) throw new BadRequestException(`Ya existe un votante con el identificador ${rows[0].ref} (${sameRef.organization})`);
+    const sameEmail = current.find((v) => normalizeEmail(v.email) === rows[0].email);
+    if (sameEmail) throw new BadRequestException(`El correo ${rows[0].email} ya está asignado a ${sameEmail.organization}: cada empresa debe tener su propio correo`);
 
     const voter = await this.ds.transaction(async (em) => {
       const v = await em.save(em.create(Voter, {
@@ -117,6 +122,25 @@ export class VotersService {
     });
     const issued = eligible && election.status === ElectionStatus.OPEN ? await this.issueCodes(electionId, voterId) : null;
     return { eligible, codeIssued: Boolean(issued?.issued), emailed: Boolean(issued?.emailed) };
+  }
+
+  /**
+   * Quitar a alguien del padrón: solo si nunca votó (ni siquiera con un voto luego anulado),
+   * porque su participación es parte de la auditoría. Sus códigos dejan de existir.
+   */
+  async removeVoter(electionId: string, voterId: string, reason?: string) {
+    await this.editable(electionId, reason);
+    const voter = await this.ds.getRepository(Voter).findOneBy({ id: voterId, electionId });
+    if (!voter) throw new NotFoundException('Votante no encontrado');
+    const participated = await this.ds.getRepository(Participation).existsBy({ voterId });
+    if (participated) throw new BadRequestException('Este votante ya participó: no se puede quitar del padrón');
+    await this.ds.transaction(async (em) => {
+      await em.delete(Voter, { id: voterId }); // cascade: borra sus códigos
+      await this.audit.log(em, electionId, 'VOTER_REMOVED', 'ADMIN', {
+        voterId, ref: voter.externalRef, organization: voter.organization, reason: reason ?? null,
+      });
+    });
+    return { removed: true };
   }
 
   /** Elegibles pendientes de votar que no tienen un código activo. */

@@ -5,13 +5,14 @@ import { api, ApiError } from '../api/client';
 import type { ActaVerification, Annulment, AuditEvent, Election, IssueResult, ParticipationReport, Results } from '../api/types';
 import { FileErrors, TemplateLinks } from '../components/Templates';
 import { ElectionForm } from '../components/ElectionForm';
+import { useConfirm } from '../components/Confirm';
 import { STATUS_LABEL } from './AdminElections';
 
 type Tab = 'participacion' | 'consola' | 'resultados' | 'padron' | 'anulaciones';
 
 const EVENT_LABEL: Record<string, string> = {
   ELECTION_CREATED: 'Proceso creado', ELECTION_UPDATED: 'Proceso editado', VOTER_ADDED: 'Votante agregado',
-  VOTER_ENABLED: 'Votante habilitado', VOTER_DISABLED: 'Votante bloqueado', AUTO_OPEN_BLOCKED: 'Apertura automática bloqueada', ROLL_IMPORTED: 'Padrón importado', CODE_ISSUED: 'Código emitido',
+  VOTER_ENABLED: 'Votante habilitado', VOTER_DISABLED: 'Votante bloqueado', VOTER_REMOVED: 'Votante quitado del padrón', AUTO_OPEN_BLOCKED: 'Apertura automática bloqueada', ROLL_IMPORTED: 'Padrón importado', CODE_ISSUED: 'Código emitido',
   CODE_REISSUED: 'Código reemitido', ELECTION_OPEN: 'Votación abierta', ELECTION_CLOSED: 'Votación cerrada',
   ELECTION_TALLIED: 'Escrutinio publicado', ACTA_ISSUED: 'Acta oficial emitida', TIE_RESOLVED: 'Empate resuelto (acta complementaria)',
   MEMBERS_NOTIFIED: 'Resultados notificados a los socios', PUBLIC_RESULTS_ENABLED: 'Resultados públicos habilitados',
@@ -28,6 +29,7 @@ export function AdminElection() {
   const [issuedCodes, setIssuedCodes] = useState<{ organization: string; code?: string }[]>([]);
   const [roll, setRoll] = useState<{ total: number; eligible: number } | null>(null);
   const [editing, setEditing] = useState(false);
+  const [ask, confirmUi] = useConfirm();
 
   const load = useCallback(() => {
     api.get<Election>(`/admin/elections/${id}`, true).then(setElection);
@@ -79,6 +81,7 @@ export function AdminElection() {
             <p className="muted small">
               {election.status === 'DRAFT' && <>{election.autoOpen ? 'Apertura automática' : 'Apertura manual'} · </>}
               {election.autoClose ? 'Cierre automático' : 'Cierre manual (la fecha de cierre es referencial)'} ·{' '}
+              {election.refType === 'RUT' ? 'identificador: RUT' : 'identificador: código propio'} ·{' '}
               {election.status === 'DRAFT' && <>{election.codesOnOpen === 'ISSUE' ? 'los códigos faltantes se emiten al abrir' : 'no abre si faltan códigos'} · </>}
               {roll ? (roll.total ? `${roll.total} en el padrón (${roll.eligible} habilitados)` : 'sin padrón cargado') : ''}
             </p>
@@ -88,10 +91,11 @@ export function AdminElection() {
           {election.status === 'DRAFT' && <button className="btn" onClick={() => setEditing(true)}>Editar proceso</button>}
           {['DRAFT', 'OPEN'].includes(election.status) && (
             <button className="btn" disabled={!roll?.eligible} title={!roll?.total ? 'Carga el padrón primero' : undefined}
-              onClick={() => (election.status === 'DRAFT' || confirm(
-                'Se generará un código NUEVO para cada votante que aún no votó y se le enviará por correo. ' +
-                'Los códigos anteriores dejarán de funcionar (el sistema no guarda los códigos, solo su huella, así que no puede reenviar los mismos). ¿Continuar?',
-              )) && action<IssueResult>('/codes/issue', (r) => r.emailed === r.issued
+              onClick={async () => (election.status === 'DRAFT' || await ask({
+                title: '¿Reenviar códigos a todos los pendientes?',
+                detail: 'Se generará un código NUEVO para cada votante que aún no votó y se le enviará por correo. Los códigos anteriores dejarán de funcionar: el sistema no guarda los códigos, solo su huella, así que no puede reenviar los mismos.',
+                cta: 'Reenviar códigos',
+              })) && action<IssueResult>('/codes/issue', (r) => r.emailed === r.issued
                 ? { kind: 'ok', text: `Se emitieron ${r.issued} código(s) y se enviaron por correo.` }
                 : { kind: 'error', text: `Se emitieron ${r.issued} código(s), pero solo ${r.emailed} correo(s) se enviaron. Revisa el servidor de correo y reemite los que faltan desde Participación.` },
                 (r) => setIssuedCodes(r.voters))}>
@@ -100,9 +104,11 @@ export function AdminElection() {
           )}
           {election.status === 'DRAFT' && (
             <button className="btn primary" disabled={!roll?.eligible}
-              onClick={() => confirm(election.codesOnOpen === 'ISSUE'
-                ? '¿Abrir la votación ahora? Los votantes sin código lo recibirán automáticamente.'
-                : '¿Abrir la votación ahora?') && action('/open', () => ({ kind: 'ok', text: 'Votación abierta' }))}>
+              onClick={async () => (await ask({
+                title: '¿Abrir la votación ahora?',
+                detail: election.codesOnOpen === 'ISSUE' ? 'Los votantes habilitados que aún no tienen código lo recibirán automáticamente antes del aviso de apertura.' : undefined,
+                cta: 'Abrir votación',
+              })) && action('/open', () => ({ kind: 'ok', text: 'Votación abierta' }))}>
               Abrir ahora
             </button>
           )}
@@ -113,12 +119,13 @@ export function AdminElection() {
                 : { kind: 'error', text: `Recordatorio enviado a ${r.sent} de ${r.pending} pendientes. Algunos correos fallaron.` })}>
                 Enviar recordatorios
               </button>
-              <button className="btn danger" onClick={() => confirm('¿Cerrar la votación ahora? No se puede reabrir.') && action('/close', () => ({ kind: 'ok', text: 'Votación cerrada' }))}>Cerrar ahora</button>
+              <button className="btn danger" onClick={async () => (await ask({ title: '¿Cerrar la votación ahora?', detail: 'No se puede reabrir. Quienes no hayan votado ya no podrán hacerlo.', cta: 'Cerrar votación', danger: true })) && action('/close', () => ({ kind: 'ok', text: 'Votación cerrada' }))}>Cerrar ahora</button>
             </>
           )}
           {election.status === 'CLOSED' && <button className="btn primary" onClick={() => action<{ pendingTies: boolean }>('/tally', (r) => ({ kind: 'ok', text: r.pendingTies ? 'Acta oficial v1 emitida con empate pendiente de resolución' : 'Acta oficial v1 emitida' }), () => setTab('resultados'))}>Publicar escrutinio</button>}
         </div>
       </header>
+      {confirmUi}
       {flash && <p className={`notice ${flash.kind === 'ok' ? 'ok' : 'warn'}`} role="status">{flash.text}</p>}
 
       {issuedCodes.some((c) => c.code) && (
@@ -157,6 +164,7 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
   const [data, setData] = useState<ParticipationReport | null>(null);
   const [filter, setFilter] = useState<'all' | 'pending' | 'voted' | 'blocked'>('all');
   const [adding, setAdding] = useState(false);
+  const [pending, setPending] = useState<PendingAction | null>(null);
   const load = useCallback(() => api.get<ParticipationReport>(`/admin/elections/${id}/participation`, true).then(setData).catch(() => null), [id]);
   useEffect(() => {
     load();
@@ -170,30 +178,24 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
   const rows = data.voters.filter((v) =>
     filter === 'all' || (filter === 'voted' ? v.votedAt : filter === 'blocked' ? !v.eligible : v.eligible && !v.votedAt));
 
-  /** Con la votación abierta, todo cambio pide motivo (queda en la consola). */
-  const askReason = (what: string) => {
-    if (!open) return '';
-    const r = prompt(`${what}\n\nLa votación está abierta: indica el motivo (queda registrado en la consola).`);
-    if (r === null) return null;
-    if (r.trim().length < 10) { alert('El motivo debe tener al menos 10 caracteres.'); return null; }
-    return r.trim();
-  };
-
   async function run(fn: () => Promise<unknown>, ok: string) {
     try { await fn(); onChange(ok); await load(); } catch (e) { onChange((e as ApiError).message, 'error'); }
   }
 
-  async function reissue(voterId: string, org: string) {
-    if (!confirm(`¿Invalidar el código actual de ${org} y enviarle uno nuevo?`)) return;
-    await run(() => api.post(`/admin/elections/${id}/voters/${voterId}/reissue`, {}, true), `Código nuevo enviado a ${org}`);
-  }
-
-  async function toggle(voterId: string, org: string, eligible: boolean) {
-    const reason = askReason(eligible ? `Habilitar a ${org}` : `Bloquear a ${org}`);
-    if (reason === null) return;
-    await run(
-      () => api.patch(`/admin/elections/${id}/voters/${voterId}/eligibility`, { eligible, reason: reason || undefined }),
-      eligible ? `${org} habilitada${open ? '; se le envió su código' : ''}` : `${org} bloqueada; su código dejó de funcionar`,
+  /**
+   * Acciones sobre un votante: se confirman en un panel dentro de la página, nunca con
+   * prompt()/confirm() del navegador (algunos navegadores integrados, como el de VS Code,
+   * los cancelan en silencio y el botón "no hace nada").
+   */
+  async function execute(a: PendingAction, reason: string) {
+    const base = `/admin/elections/${id}/voters/${a.voter.id}`;
+    const r = reason || undefined;
+    if (a.kind === 'reissue') return run(() => api.post(`${base}/reissue`, {}, true), `Código nuevo enviado a ${a.voter.organization}`);
+    if (a.kind === 'remove') return run(() => api.post(`${base}/remove`, { reason: r }, true), `${a.voter.organization} quitada del padrón`);
+    const eligible = a.kind === 'enable';
+    return run(
+      () => api.patch(`${base}/eligibility`, { eligible, reason: r }),
+      eligible ? `${a.voter.organization} habilitada${open ? '; se le envió su código' : ''}` : `${a.voter.organization} bloqueada; su código dejó de funcionar`,
     );
   }
 
@@ -220,6 +222,10 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
         {editable && <button className="btn small" onClick={() => setAdding((a) => !a)}>{adding ? 'Cancelar' : '+ Agregar votante'}</button>}
       </div>
       {adding && <AddVoter id={id} open={open} onDone={(msg) => { setAdding(false); run(async () => undefined, msg); }} />}
+      {pending && (
+        <ConfirmAction action={pending} needsReason={open && pending.kind !== 'reissue'}
+          onCancel={() => setPending(null)} onConfirm={async (reason) => { await execute(pending, reason); setPending(null); }} />
+      )}
       <div className="table-wrap">
         <table>
           <thead><tr><th>Empresa</th><th>Correo</th><th>Estado</th><th></th></tr></thead>
@@ -230,10 +236,11 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
                 <td>{v.email}</td>
                 <td>{!v.eligible ? <span className="badge muted">Bloqueada</span> : v.votedAt ? <span className="badge OPEN">Votó {new Date(v.votedAt).toLocaleString('es-CL')}</span> : <span className="badge DRAFT">Pendiente</span>}</td>
                 <td className="row-actions">
-                  {editable && v.eligible && !v.votedAt && <button className="btn small" onClick={() => reissue(v.id, v.organization)}>Reemitir código</button>}
+                  {editable && v.eligible && !v.votedAt && <button className="btn small" onClick={() => setPending({ kind: 'reissue', voter: v })}>Reemitir código</button>}
                   {editable && !v.votedAt && (
-                    <button className="btn small" onClick={() => toggle(v.id, v.organization, !v.eligible)}>{v.eligible ? 'Bloquear' : 'Habilitar'}</button>
+                    <button className="btn small" onClick={() => setPending({ kind: v.eligible ? 'disable' : 'enable', voter: v })}>{v.eligible ? 'Bloquear' : 'Habilitar'}</button>
                   )}
+                  {editable && !v.votedAt && <button className="btn small danger" onClick={() => setPending({ kind: 'remove', voter: v })}>Quitar</button>}
                 </td>
               </tr>
             ))}
@@ -242,6 +249,45 @@ function ParticipationTab({ id, onChange }: { id: string; onChange: (text: strin
         </table>
       </div>
     </section>
+  );
+}
+
+type VoterRow = ParticipationReport['voters'][number];
+type PendingAction = { kind: 'enable' | 'disable' | 'remove' | 'reissue'; voter: VoterRow };
+
+const ACTION_TEXT: Record<PendingAction['kind'], (org: string) => { title: string; detail: string; cta: string }> = {
+  enable: (o) => ({ title: `Habilitar a ${o}`, detail: 'Podrá votar. Con la votación abierta, recibirá su código de inmediato.', cta: 'Habilitar' }),
+  disable: (o) => ({ title: `Bloquear a ${o}`, detail: 'No podrá votar y su código actual dejará de funcionar.', cta: 'Bloquear' }),
+  remove: (o) => ({ title: `Quitar a ${o} del padrón`, detail: 'Úsalo para registros erróneos o duplicados. Solo es posible si nunca votó. Queda registrado en la consola.', cta: 'Quitar del padrón' }),
+  reissue: (o) => ({ title: `Reemitir el código de ${o}`, detail: 'Se le enviará un código nuevo y el anterior dejará de funcionar.', cta: 'Reemitir código' }),
+};
+
+/** Confirmación dentro de la página, con motivo cuando la votación está abierta. */
+function ConfirmAction({ action, needsReason, onConfirm, onCancel }: {
+  action: PendingAction; needsReason: boolean; onConfirm: (reason: string) => Promise<void>; onCancel: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const t = ACTION_TEXT[action.kind](action.voter.organization);
+  const valid = !needsReason || reason.trim().length >= 10;
+  return (
+    <div className="card confirm-panel" role="dialog" aria-labelledby="confirm-title">
+      <h3 id="confirm-title">{t.title}</h3>
+      <p className="help">{t.detail}</p>
+      {needsReason && (
+        <label>Motivo (obligatorio con la votación abierta; queda en la consola)
+          <input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ej.: regularizó su cuota hoy" />
+          {reason.length > 0 && reason.trim().length < 10 && <span className="muted small">Mínimo 10 caracteres</span>}
+        </label>
+      )}
+      <div className="toolbar">
+        <button className="btn" onClick={onCancel} disabled={busy}>Cancelar</button>
+        <button className={`btn ${action.kind === 'remove' || action.kind === 'disable' ? 'danger' : 'primary'}`} disabled={!valid || busy}
+          onClick={async () => { setBusy(true); await onConfirm(reason.trim()); setBusy(false); }}>
+          {busy ? '…' : t.cta}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -313,6 +359,7 @@ function ConsoleTab({ id }: { id: string }) {
 }
 
 function ResultsTab({ id }: { id: string }) {
+  const [ask, confirmUi] = useConfirm();
   const [r, setR] = useState<Results | null>(null);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'warn'; text: string } | null>(null);
   const [check, setCheck] = useState<ActaVerification | null>(null);
@@ -367,10 +414,11 @@ function ResultsTab({ id }: { id: string }) {
           )}
 
           <h3>Comunicar resultados</h3>
+          {confirmUi}
           {pending && <p className="notice warn">Hay empates pendientes. Registra su resolución abajo para habilitar la notificación y la publicación.</p>}
           <div className="toolbar">
             <button className="btn primary" disabled={pending || Boolean(r.publication?.membersNotifiedAt)}
-              onClick={() => confirm('¿Enviar los resultados oficiales por correo a todos los socios del padrón?') &&
+              onClick={async () => (await ask({ title: '¿Enviar los resultados oficiales por correo?', detail: 'Se envía una sola vez a todos los socios del padrón, con la huella del acta vigente.', cta: 'Enviar resultados' })) &&
                 run(() => api.post(`/admin/elections/${id}/notify-members`, {}, true), 'Resultados enviados a los socios')}>
               {r.publication?.membersNotifiedAt ? `Socios notificados el ${new Date(r.publication.membersNotifiedAt).toLocaleString('es-CL')}` : 'Notificar a los socios'}
             </button>
@@ -445,6 +493,7 @@ function ResultsTab({ id }: { id: string }) {
 function TieResolution({ electionId, position, onDone }: { electionId: string; position: Results['positions'][number]; onDone: () => void }) {
   const tied = position.ranking.filter((c) => c.status === 'TIED');
   const remaining = position.seats - position.ranking.filter((c) => c.status === 'ELECTED').length;
+  const [ask, confirmUi] = useConfirm();
   const [winners, setWinners] = useState<string[]>([]);
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -452,7 +501,7 @@ function TieResolution({ electionId, position, onDone }: { electionId: string; p
 
   async function submit() {
     setError(null);
-    if (!confirm('Esto emite un acta complementaria que no se puede modificar. ¿Continuar?')) return;
+    if (!(await ask({ title: '¿Emitir el acta complementaria?', detail: 'Queda registrada con su huella y no se puede modificar.', cta: 'Emitir acta' }))) return;
     try {
       await api.post(`/admin/elections/${electionId}/ties/resolve`, { positionId: position.id, winners, note }, true);
       onDone();
@@ -478,6 +527,7 @@ function TieResolution({ electionId, position, onDone }: { electionId: string; p
         <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ej.: Candidata X cede el cupo de mutuo acuerdo, según acta de comisión del 12-10." />
       </label>
       {error && <p className="error" role="alert">{error}</p>}
+      {confirmUi}
       <button className="btn primary" disabled={winners.length !== remaining || note.trim().length < 10} onClick={submit}>Emitir acta complementaria</button>
     </div>
   );

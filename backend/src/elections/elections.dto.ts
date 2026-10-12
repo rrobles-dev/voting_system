@@ -2,7 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsInt, IsOptional, IsString, Max, Min, ValidateNested,
 } from 'class-validator';
-import { CodesOnOpen } from '../database/entities';
+import { CodesOnOpen, RefType } from '../database/entities';
 
 /**
  * DTOs con class-validator: el equivalente de @Valid + @NotNull/@Min en Spring.
@@ -30,6 +30,7 @@ export class CreateElectionDto {
   @IsOptional() @IsInt() @Min(6) @Max(16) codeLength?: number;
   @IsOptional() @IsInt() @Min(1) @Max(100) quorumPercent?: number;
   @IsOptional() @IsInt() @Min(1) retentionDays?: number;
+  @IsOptional() @IsEnum(RefType) refType?: RefType;
   @IsOptional() @IsBoolean() autoOpen?: boolean;
   @IsOptional() @IsBoolean() autoClose?: boolean;
   @IsOptional() @IsEnum(CodesOnOpen) codesOnOpen?: CodesOnOpen;

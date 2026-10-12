@@ -220,6 +220,10 @@ input[type='file'] { padding: 10px; }
 .add-voter { margin-bottom: 12px; }
 @media (max-width: 640px) { .review-grid { grid-template-columns: 1fr; gap: 2px; } .review-grid dd { margin-bottom: 8px; } }
 
+.confirm-panel { border-color: var(--accent); margin-bottom: 12px; }
+.confirm-panel h3 { margin: 0 0 4px; font-size: 1.05rem; }
+.btn.small.danger { color: var(--danger); border-color: var(--danger); }
+
 /* Página pública insertable */
 .public { max-width: 640px; margin: 0 auto; padding: 20px 16px; }
 .public h1 { margin-bottom: 4px; }

@@ -16,6 +16,12 @@ export enum ElectionStatus {
   CLOSED = 'CLOSED',   // cerrada, sin escrutinio publicado
   TALLIED = 'TALLIED', // escrutada
 }
+/** Tipo de identificador del votante: lo declara la comisión, no se adivina. */
+export enum RefType {
+  RUT = 'RUT',   // RUT chileno: se normaliza y se valida el dígito verificador
+  CODE = 'CODE', // número de socio u otro código: se guarda tal cual
+}
+
 /** Qué hacer al abrir si hay votantes habilitados sin código activo. */
 export enum CodesOnOpen {
   ISSUE = 'ISSUE', // emitirlos automáticamente justo antes del aviso de apertura
@@ -36,6 +42,7 @@ export class Election {
   @Column({ default: 9 }) codeLength: number;
   @Column({ type: 'int', nullable: true }) quorumPercent: number | null; // null = sin quórum
   @Column({ default: 90 }) retentionDays: number;
+  @Column({ type: 'enum', enum: RefType, default: RefType.CODE }) refType: RefType;
   @Column({ default: true }) autoOpen: boolean; // abrir solo al llegar opensAt
   // Cierre automático en closesAt. Si es false, closesAt es referencial y la comisión cierra a mano.
   @Column({ default: true }) autoClose: boolean;

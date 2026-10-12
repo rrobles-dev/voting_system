@@ -48,10 +48,11 @@ test('publicar el escrutinio congela el acta y bloquea la comunicación hasta re
   await expect(page.getByLabel('Resultados públicos e insertables')).toBeDisabled();
 
   // Resolver el empate → acta complementaria v2
-  page.on('dialog', (d) => d.accept());
   await page.locator('.tie-box').getByText('Beto').click();
   await page.getByLabel('Fundamento (queda en el acta)').fill('Caro cede el cupo a Beto de mutuo acuerdo.');
   await page.getByRole('button', { name: 'Emitir acta complementaria' }).click();
+  // Confirmación dentro de la página (no un diálogo nativo del navegador)
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Emitir acta' }).click();
   await expect(page.getByRole('heading', { name: 'Acta oficial · versión 2' })).toBeVisible();
   await expect(page.getByText('Empate resuelto:')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Notificar a los socios' })).toBeEnabled();

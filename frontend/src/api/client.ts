@@ -40,9 +40,10 @@ export const api = {
   put: <T>(p: string, body: unknown) => request<T>('PUT', p, body, true),
   patch: <T>(p: string, body: unknown) => request<T>('PATCH', p, body, true),
   /** Sube un archivo (multipart) en el campo "file". */
-  async postFile<T>(path: string, file: File): Promise<T> {
+  async postFile<T>(path: string, file: File, fields: Record<string, string> = {}): Promise<T> {
     const body = new FormData();
     body.append('file', file);
+    for (const [k, v] of Object.entries(fields)) body.append(k, v);
     const res = await fetch(`/api${path}`, { method: 'POST', headers: { 'x-api-key': auth.get() ?? '' }, body });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {

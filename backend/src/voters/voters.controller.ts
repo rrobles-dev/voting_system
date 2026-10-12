@@ -20,6 +20,10 @@ class EligibilityDto {
   @IsOptional() @IsString() reason?: string;
 }
 
+class ReasonDto {
+  @IsOptional() @IsString() reason?: string;
+}
+
 @Controller('admin/elections/:id')
 @Roles('ADMIN')
 export class VotersController {
@@ -51,6 +55,12 @@ export class VotersController {
   @Patch('voters/:voterId/eligibility')
   setEligibility(@Param('id', ParseUUIDPipe) id: string, @Param('voterId', ParseUUIDPipe) voterId: string, @Body() dto: EligibilityDto) {
     return this.voters.setEligibility(id, voterId, dto.eligible, dto.reason);
+  }
+
+  /** Quitar del padrón a quien nunca votó (por ejemplo, un registro duplicado). */
+  @Post('voters/:voterId/remove')
+  removeVoter(@Param('id', ParseUUIDPipe) id: string, @Param('voterId', ParseUUIDPipe) voterId: string, @Body() dto: ReasonDto) {
+    return this.voters.removeVoter(id, voterId, dto.reason);
   }
 
   @Post('codes/issue')

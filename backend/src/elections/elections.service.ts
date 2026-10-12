@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { CodesOnOpen, Election, ElectionStatus, Position, Voter } from '../database/entities';
+import { CodesOnOpen, Election, ElectionStatus, Position, RefType, Voter } from '../database/entities';
 import { VotersService } from '../voters/voters.service';
 import { AuditService } from '../audit/audit.service';
 import { MailService } from '../mail/mail.service';
@@ -55,6 +55,7 @@ export class ElectionsService {
       codeLength: dto.codeLength ?? 9,
       quorumPercent: dto.quorumPercent ?? null,
       retentionDays: dto.retentionDays ?? 90,
+      refType: dto.refType ?? RefType.CODE,
       autoOpen: dto.autoOpen ?? true,
       autoClose: dto.autoClose ?? true,
       codesOnOpen: dto.codesOnOpen ?? CodesOnOpen.ISSUE,
@@ -95,6 +96,11 @@ export class ElectionsService {
     const before = await this.get(id);
     if (before.status !== ElectionStatus.DRAFT) throw new BadRequestException('Solo se puede editar un proceso en borrador');
     this.validate(dto);
+    // El padrón ya cargado se validó con el tipo anterior: cambiarlo dejaría datos inconsistentes.
+    const newType = dto.refType ?? RefType.CODE;
+    if (newType !== before.refType && (await this.ds.getRepository(Voter).countBy({ electionId: id })) > 0) {
+      throw new BadRequestException('Para cambiar el tipo de identificador, primero vuelve a cargar el padrón vacío o quita los votantes');
+    }
     await this.ds.transaction(async (em) => {
       await em.delete(Position, { electionId: id }); // cascade borra los candidatos
       await em.update(Election, { id }, this.fields(dto));

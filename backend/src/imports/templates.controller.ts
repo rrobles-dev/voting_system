@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Get, Header, Post, StreamableFile, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, Post, StreamableFile, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Roles } from '../auth/roles.guard';
 import { VotersService } from '../voters/voters.service';
@@ -48,9 +48,10 @@ export class TemplatesController {
   /** Valida un padrón sin guardarlo: devuelve el resumen y todos los errores. */
   @Post('padron/validate')
   @UseInterceptors(upload)
-  async validateRoll(@UploadedFile() file?: Express.Multer.File) {
+  async validateRoll(@UploadedFile() file?: Express.Multer.File, @Body('refType') refType?: string) {
     if (!file) throw new BadRequestException('Adjunta el archivo en el campo "file"');
-    const { errors, summary } = await this.voters.validateRoll(file.buffer, file.originalname);
+    const type = refType === 'RUT' ? 'RUT' : 'CODE';
+    const { errors, summary } = await this.voters.validateRoll(file.buffer, file.originalname, type);
     return { ...summary, errors };
   }
 

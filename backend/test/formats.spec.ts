@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import { normalizeHeader, readTable } from '../src/imports/tabular';
-import { parseCandidates, parseRoll, templates } from '../src/imports/formats';
+import { normalizeRef, normalizeRut, parseCandidates, parseRoll, refKey, rutCheckDigit, templates } from '../src/imports/formats';
 
 const csv = (s: string) => Buffer.from(s, 'utf8');
 
@@ -58,7 +58,7 @@ describe('parseRoll', () => {
       'Fila 2: correo inválido (malo)',
       'Fila 2: el peso debe ser un entero positivo',
       'Fila 2: "habilitado" debe ser sí o no',
-      'Fila 3: identificador repetido (1)',
+      'Fila 3: identificador repetido (1, ya está en la fila 2)',
     ]);
   });
 
@@ -82,5 +82,57 @@ describe('parseCandidates', () => {
   it('detecta candidatos repetidos en el mismo cargo', async () => {
     const t = await readTable(csv('cargo,candidato\nDirectorio,Ana\nDirectorio,ana\n'), 'c.csv', 'Candidatos');
     expect(parseCandidates(t).errors[0]).toMatch(/repetido/);
+  });
+});
+
+describe('identificadores según el tipo declarado', () => {
+  it('calcula el dígito verificador del RUT (módulo 11, incluido K y 0)', () => {
+    expect(rutCheckDigit('76666666')).toBe('3');
+    expect(rutCheckDigit('11111111')).toBe('1');
+    expect(rutCheckDigit('10000013')).toBe('K');
+  });
+
+  it('RUT: distintas escrituras se normalizan a una sola', () => {
+    for (const r of ['76.666.666-3', '76666666-3', '76666666 3', ' 76.666.666 - 3 ', '766666663']) {
+      expect(normalizeRut(r)).toBe('76666666-3');
+    }
+  });
+
+  it('RUT: rechaza dígito verificador incorrecto', () => {
+    expect(normalizeRut('76.666.666-6')).toBeNull();
+  });
+
+  it('CODE: un número de socio NO se trata como RUT', () => {
+    expect(normalizeRef('12345', 'CODE')).toBe('12345');
+    expect(refKey('12345', 'CODE')).not.toBe(refKey('1234-5', 'CODE'));
+  });
+
+  it('CODE: puntos y guiones son significativos; mayúsculas y espacios extremos no', () => {
+    expect(refKey('1-23', 'CODE')).not.toBe(refKey('12-3', 'CODE'));
+    expect(refKey(' soc-01 ', 'CODE')).toBe(refKey('SOC-01', 'CODE'));
+  });
+});
+
+describe('duplicados en el padrón', () => {
+  const roll = (body: string, type: 'RUT' | 'CODE') => readTable(csv(body), 'p.csv', 'Padrón').then((t) => parseRoll(t, type));
+
+  it('RUT: detecta el mismo RUT escrito con y sin puntos', async () => {
+    const { errors } = await roll('rut_o_id,empresa,correo\n76.666.666-3,Filtros,f@x.cl\n76666666-3,Filtros bis,g@x.cl\n', 'RUT');
+    expect(errors).toEqual(['Fila 3: identificador repetido (76666666-3, ya está en la fila 2)']);
+  });
+
+  it('RUT: informa el dígito verificador inválido', async () => {
+    const { errors } = await roll('rut_o_id,empresa,correo\n76.666.666-6,Filtros,f@x.cl\n', 'RUT');
+    expect(errors[0]).toMatch(/RUT inválido \(76.666.666-6\)/);
+  });
+
+  it('CODE: "12345" y "1234-5" son socios distintos', async () => {
+    const { errors } = await roll('rut_o_id,empresa,correo\n12345,A,a@x.cl\n1234-5,B,b@x.cl\n', 'CODE');
+    expect(errors).toEqual([]);
+  });
+
+  it('detecta el mismo correo aunque cambien las mayúsculas (cualquier tipo)', async () => {
+    const { errors } = await roll('rut_o_id,empresa,correo\nS1,A,Socios@X.cl\nS2,B,socios@x.cl\n', 'CODE');
+    expect(errors).toEqual(['Fila 3: correo repetido (socios@x.cl, ya está en la fila 2)']);
   });
 });

@@ -38,6 +38,7 @@ export function ElectionForm({ initial, onDone, onCancel }: {
   const [closesAt, setClosesAt] = useState(initial ? toLocal(initial.closesAt) : '');
   const [opening, setOpening] = useState<Choice>(initial ? (initial.autoOpen ? 'auto' : 'manual') : '');
   const [closing, setClosing] = useState<Choice>(initial ? (initial.autoClose ? 'auto' : 'manual') : '');
+  const [refType, setRefType] = useState<'' | 'RUT' | 'CODE'>(initial?.refType ?? '');
   const [codesOnOpen, setCodesOnOpen] = useState<'' | 'ISSUE' | 'BLOCK'>(initial?.codesOnOpen ?? '');
   const [codeLength, setCodeLength] = useState(String(initial?.codeLength ?? 9));
   const [quorum, setQuorum] = useState(initial?.quorumPercent ? String(initial.quorumPercent) : '');
@@ -81,11 +82,15 @@ export function ElectionForm({ initial, onDone, onCancel }: {
     }
   }
 
-  async function checkRoll(file: File) {
+  async function checkRoll(file: File, type = refType) {
     setRollFile(file);
     setRollCheck(null);
+    if (!type) {
+      setRollCheck({ total: 0, eligible: 0, notEligible: 0, errors: ['Primero elige el tipo de identificador (RUT u otro código) para validar el padrón'] });
+      return;
+    }
     try {
-      setRollCheck(await api.postFile<RollValidation>('/admin/templates/padron/validate', file));
+      setRollCheck(await api.postFile<RollValidation>('/admin/templates/padron/validate', file, { refType: type }));
     } catch (e) {
       setRollCheck({ total: 0, eligible: 0, notEligible: 0, errors: [(e as ApiError).message] });
     }
@@ -101,6 +106,7 @@ export function ElectionForm({ initial, onDone, onCancel }: {
     if (!opening) errs.push('Elige cómo se abre la votación (automática o manual)');
     if (!closing) errs.push('Elige cómo se cierra la votación (automática o manual)');
     if (!codesOnOpen) errs.push('Elige qué hacer si al abrir faltan códigos');
+    if (!refType) errs.push('Elige el tipo de identificador de los votantes (RUT u otro código)');
     const cl = Number(codeLength);
     if (!Number.isInteger(cl) || cl < 6 || cl > 16) errs.push('El largo del código debe estar entre 6 y 16');
     if (quorum && (Number(quorum) < 1 || Number(quorum) > 100)) errs.push('El quórum debe estar entre 1 y 100');
@@ -157,6 +163,7 @@ export function ElectionForm({ initial, onDone, onCancel }: {
       closesAt: new Date(closesAt).toISOString(),
       autoOpen: opening === 'auto',
       autoClose: closing === 'auto',
+      refType,
       codesOnOpen,
       codeLength: Number(codeLength),
       quorumPercent: quorum ? Number(quorum) : undefined,
@@ -191,7 +198,8 @@ export function ElectionForm({ initial, onDone, onCancel }: {
           <dt>Apertura</dt><dd>{fmt(opensAt)} · {opening === 'auto' ? 'automática' : 'manual'}</dd>
           <dt>Cierre</dt><dd>{fmt(closesAt)} · {closing === 'auto' ? 'automático' : 'manual (fecha referencial)'}</dd>
           <dt>Códigos al abrir</dt><dd>{codesOnOpen === 'ISSUE' ? 'Se emiten automáticamente los que falten' : 'No abre si faltan códigos'}</dd>
-          <dt>Código</dt><dd>{codeLength} caracteres</dd>
+          <dt>Identificador</dt><dd>{refType === 'RUT' ? 'RUT chileno (se valida el dígito verificador)' : 'Código propio (se guarda tal cual)'}</dd>
+          <dt>Código de votación</dt><dd>{codeLength} caracteres</dd>
           <dt>Quórum</dt><dd>{quorum ? `${quorum}%` : 'No se exige'}</dd>
           {!editing && <><dt>Padrón</dt><dd>{rollFile && rollCheck ? `${rollFile.name}: ${rollCheck.total} empresas, ${rollCheck.eligible} habilitadas` : 'Se cargará después'}</dd></>}
         </dl>
@@ -281,6 +289,17 @@ export function ElectionForm({ initial, onDone, onCancel }: {
         </fieldset>
       ))}
       <button type="button" className="btn" onClick={() => setPositions((ps) => [...ps, emptyPosition()])}>+ Agregar cargo</button>
+
+      <fieldset className="position-edit">
+        <legend>Identificador de los votantes</legend>
+        <div role="radiogroup" aria-label="Tipo de identificador" className="choice">
+          <label className="radio"><input type="radio" name="refType" checked={refType === 'RUT'}
+            onChange={() => { setRefType('RUT'); if (rollFile) checkRoll(rollFile, 'RUT'); }} /> RUT chileno (con o sin puntos; se valida el dígito verificador)</label>
+          <label className="radio"><input type="radio" name="refType" checked={refType === 'CODE'}
+            onChange={() => { setRefType('CODE'); if (rollFile) checkRoll(rollFile, 'CODE'); }} /> Otro código: número de socio, código interno, etc. (se guarda tal cual)</label>
+        </div>
+        <p className="help">Sirve para detectar votantes duplicados. El correo también debe ser único en el padrón.</p>
+      </fieldset>
 
       {!editing && (
         <fieldset className="position-edit">

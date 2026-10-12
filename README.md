@@ -26,6 +26,8 @@ El votante recibe un **código de recibo**. Con él puede verificar que su voto 
 ## Reglas implementadas (v1)
 
 - Un voto por empresa, con padrón entregado por el admin. Las empresas sin cuotas al día quedan bloqueadas (`habilitado = no`).
+- **Tipo de identificador declarado por proceso**: RUT chileno (se normaliza `76.123.456-0` = `76123456-0` y se valida el dígito verificador) u otro código propio (se guarda tal cual; puntos y guiones son significativos). No se adivina mirando el valor: `12345` puede ser un número de socio.
+- **Sin duplicados**: ni por identificador (según su tipo) ni por correo, tanto al cargar el padrón como al agregar votantes uno a uno. Dos empresas con el mismo correo recibirían ambos códigos en la misma bandeja.
 - **Plantillas descargables** de padrón y candidatos en Excel (.xlsx, con hoja de instrucciones y lista desplegable) y CSV. La carga acepta .xlsx o CSV con separador `,` o `;`, porque **Excel en español guarda los CSV con punto y coma**. Los archivos se validan antes de crear el proceso y se informan **todos** los errores con su número de fila.
 - Códigos de 9 caracteres (configurable) con mayúsculas y minúsculas, sin caracteres ambiguos (`0/O`, `1/l/I`). Se guardan hasheados con HMAC, nunca en claro.
 - Varios cargos por proceso, cada uno con cupos y mínimo/máximo de marcas.
@@ -80,8 +82,9 @@ El votante recibe un **código de recibo**. Con él puede verificar que su voto 
 3. **HMAC en vez de bcrypt para los códigos**: bcrypt usa un salt aleatorio por fila, lo que impide buscar `WHERE codeHash = ?`. HMAC con un secreto del servidor (pepper) permite la búsqueda e impide que alguien con una copia de la base pruebe códigos offline.
 4. **Mensajes de error genéricos**: "código inválido, ya utilizado o fuera de plazo" no revela cuál de los tres casos es, para no ayudar a quien intenta adivinar códigos.
 5. **JSON canónico en el log**: Postgres `jsonb` reordena las claves, así que el hash se calcula sobre el JSON con claves ordenadas.
-6. **Mensajes basados en lo que realmente ocurrió**: la interfaz arma el mensaje de éxito con los números que devuelve la API (códigos emitidos, correos entregados), nunca con un texto fijo. En un sistema electoral, un "enviado" que no ocurrió es peor que un error.
-7. **Rate limit configurable** (`VOTING_RATE_LIMIT`): varios votantes pueden compartir IP (misma oficina, asamblea presencial). Un límite muy estricto bloquearía a votantes legítimos.
+6. **Sin diálogos nativos del navegador**: todas las confirmaciones y motivos se piden dentro de la página. `window.confirm()` y `window.prompt()` los bloquean algunos navegadores integrados (como el de VS Code) y los iframes aislados, y el botón parece no hacer nada.
+7. **Mensajes basados en lo que realmente ocurrió**: la interfaz arma el mensaje de éxito con los números que devuelve la API (códigos emitidos, correos entregados), nunca con un texto fijo. En un sistema electoral, un "enviado" que no ocurrió es peor que un error.
+8. **Rate limit configurable** (`VOTING_RATE_LIMIT`): varios votantes pueden compartir IP (misma oficina, asamblea presencial). Un límite muy estricto bloquearía a votantes legítimos.
 
 ## Correr en local
 
@@ -138,7 +141,7 @@ npx playwright show-report
 | POST | `/api/admin/templates/padron/validate` · `/candidatos/parse` (multipart `file`) | Admin |
 | PUT | `/api/admin/elections/:id` (solo en borrador) | Admin |
 | POST | `/api/admin/elections/:id/voters/import` (multipart `file`: .xlsx o .csv; solo en borrador) | Admin |
-| POST | `/api/admin/elections/:id/voters` · PATCH `/voters/:voterId/eligibility` (motivo obligatorio con la votación abierta) | Admin |
+| POST | `/api/admin/elections/:id/voters` · PATCH `/voters/:voterId/eligibility` · POST `/voters/:voterId/remove` (motivo obligatorio con la votación abierta) | Admin |
 | POST | `/api/admin/elections/:id/codes/issue` | Admin |
 | POST | `/api/admin/elections/:id/voters/:voterId/reissue` | Admin |
 | POST | `/api/admin/elections/:id/open` · `/close` | Admin |
