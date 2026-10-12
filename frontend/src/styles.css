@@ -199,6 +199,12 @@ tr:last-child td { border-bottom: none; }
 .tie-box { border-top: 1px dashed var(--warn); margin-top: 16px; padding-top: 4px; }
 .tie-box .candidates { margin-bottom: 12px; }
 
+/* Plantillas */
+.link-btn { background: none; border: none; padding: 0; font: inherit; color: var(--accent); text-decoration: underline; cursor: pointer; }
+.template-links { margin: 0 0 8px; }
+input[type='file'] { padding: 10px; }
+.position-edit .switch { margin-bottom: 4px; }
+
 /* Página pública insertable */
 .public { max-width: 640px; margin: 0 auto; padding: 20px 16px; }
 .public h1 { margin-bottom: 4px; }

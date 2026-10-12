@@ -37,7 +37,19 @@ async function request<T>(method: string, path: string, body?: unknown, admin = 
 export const api = {
   get: <T>(p: string, admin = false) => request<T>('GET', p, undefined, admin),
   post: <T>(p: string, body?: unknown, admin = false) => request<T>('POST', p, body ?? {}, admin),
-  /** Descarga un CSV autenticado como archivo. */
+  /** Sube un archivo (multipart) en el campo "file". */
+  async postFile<T>(path: string, file: File): Promise<T> {
+    const body = new FormData();
+    body.append('file', file);
+    const res = await fetch(`/api${path}`, { method: 'POST', headers: { 'x-api-key': auth.get() ?? '' }, body });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = Array.isArray(data?.message) ? data.message.join('. ') : data?.message ?? 'Error inesperado';
+      throw new ApiError(res.status, msg, data?.errors);
+    }
+    return data as T;
+  },
+  /** Descarga un archivo autenticado (CSV, HTML, plantillas). */
   async download(path: string, filename: string) {
     const res = await fetch(`/api${path}`, { headers: { 'x-api-key': auth.get() ?? '' } });
     if (!res.ok) {
@@ -47,6 +59,6 @@ export const api = {
     const url = URL.createObjectURL(await res.blob());
     const a = Object.assign(document.createElement('a'), { href: url, download: filename });
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000); // Safari necesita que la URL siga viva un momento
   },
 };

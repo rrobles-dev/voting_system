@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError, auth } from '../api/client';
-import type { Election } from '../api/types';
+import type { Election, ParsedCandidates, RollValidation } from '../api/types';
+import { FileErrors, TemplateLinks } from '../components/Templates';
 
 export const STATUS_LABEL: Record<string, string> = {
   DRAFT: 'Borrador', OPEN: 'Abierta', CLOSED: 'Cerrada', TALLIED: 'Escrutada',
@@ -70,7 +71,13 @@ export function AdminElections() {
 
 interface PositionDraft { name: string; seats: number; minSelection: number; maxSelection: number; candidates: string }
 
-/** Formulario v1: lo esencial. v2: asistente con plantillas y validaciones cruzadas. */
+const toLines = (cands: { name: string; detail?: string }[]) => cands.map((c) => (c.detail ? `${c.name} | ${c.detail}` : c.name)).join('\n');
+
+/**
+ * Formulario v1: lo esencial, con carga opcional de candidatos y padrón desde plantilla.
+ * Los archivos se validan ANTES de crear el proceso: los errores aparecen todos juntos.
+ * v2: asistente por pasos con plantillas de proceso.
+ */
 function CreateElection() {
   const navigate = useNavigate();
   const toLocal = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -78,25 +85,67 @@ function CreateElection() {
   const [description, setDescription] = useState('');
   const [opensAt, setOpensAt] = useState(toLocal(new Date(Date.now() + 3600_000)));
   const [closesAt, setClosesAt] = useState(toLocal(new Date(Date.now() + 4 * 86400_000)));
+  const [autoOpen, setAutoOpen] = useState(true);
+  const [codesOnOpen, setCodesOnOpen] = useState<'ISSUE' | 'BLOCK'>('ISSUE');
   const [codeLength, setCodeLength] = useState(9);
   const [quorum, setQuorum] = useState('');
   const [positions, setPositions] = useState<PositionDraft[]>([
     { name: 'Directorio', seats: 5, minSelection: 1, maxSelection: 5, candidates: '' },
   ]);
+  const [candidateMsg, setCandidateMsg] = useState<{ text: string; errors?: string[] } | null>(null);
+  const [rollFile, setRollFile] = useState<File | null>(null);
+  const [rollCheck, setRollCheck] = useState<RollValidation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const update = (i: number, patch: Partial<PositionDraft>) =>
     setPositions((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
 
+  /** Los candidatos del archivo rellenan los cargos (por nombre); los cargos nuevos se agregan con 1 cupo. */
+  async function loadCandidates(file: File) {
+    setCandidateMsg(null);
+    try {
+      const r = await api.postFile<ParsedCandidates>('/admin/templates/candidatos/parse', file);
+      if (r.errors.length) { setCandidateMsg({ text: 'No se cargaron los candidatos.', errors: r.errors }); return; }
+      setPositions((ps) => {
+        const next = [...ps];
+        for (const group of r.positions) {
+          const idx = next.findIndex((p) => p.name.trim().toLowerCase() === group.position.trim().toLowerCase());
+          if (idx >= 0) next[idx] = { ...next[idx], candidates: toLines(group.candidates) };
+          else next.push({ name: group.position, seats: 1, minSelection: 0, maxSelection: 1, candidates: toLines(group.candidates) });
+        }
+        return next;
+      });
+      const total = r.positions.reduce((n, g) => n + g.candidates.length, 0);
+      setCandidateMsg({ text: `${total} candidato(s) cargados en ${r.positions.length} cargo(s). Revisa cupos y marcas de cada cargo.` });
+    } catch (e) {
+      setCandidateMsg({ text: (e as ApiError).message });
+    }
+  }
+
+  async function checkRoll(file: File) {
+    setRollFile(file);
+    setRollCheck(null);
+    try {
+      setRollCheck(await api.postFile<RollValidation>('/admin/templates/padron/validate', file));
+    } catch (e) {
+      setRollCheck({ total: 0, eligible: 0, notEligible: 0, errors: [(e as ApiError).message] });
+    }
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (rollCheck?.errors.length) { setError('Corrige el padrón o quítalo antes de crear el proceso.'); return; }
+    setBusy(true);
     try {
       const created = await api.post<Election>('/admin/elections', {
         title,
         description: description || undefined,
         opensAt: new Date(opensAt).toISOString(),
         closesAt: new Date(closesAt).toISOString(),
+        autoOpen,
+        codesOnOpen,
         codeLength,
         quorumPercent: quorum ? Number(quorum) : undefined,
         positions: positions.map((p) => ({
@@ -106,14 +155,18 @@ function CreateElection() {
           maxSelection: p.maxSelection,
           // Un candidato por línea; "Nombre | detalle" opcional
           candidates: p.candidates.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
-            const [name, detail] = l.split('|').map((s) => s.trim());
+            const [name, detail] = l.split('|').map((x) => x.trim());
             return { name, detail: detail || undefined };
           }),
         })),
       }, true);
+      // El padrón ya fue validado; si aun así falla, el proceso queda en borrador y se reintenta desde su página.
+      if (rollFile) await api.postFile(`/admin/elections/${created.id}/voters/import`, rollFile).catch(() => null);
       navigate(`/admin/${created.id}`);
     } catch (err) {
       setError((err as ApiError).message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -122,14 +175,39 @@ function CreateElection() {
       <h2>Nuevo proceso</h2>
       <label>Título<input value={title} onChange={(e) => setTitle(e.target.value)} required /></label>
       <label>Descripción (se muestra al votante)<textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></label>
-      <div className="row">
-        <label>Apertura<input type="datetime-local" value={opensAt} onChange={(e) => setOpensAt(e.target.value)} required /></label>
-        <label>Cierre<input type="datetime-local" value={closesAt} onChange={(e) => setClosesAt(e.target.value)} required /></label>
-      </div>
+
+      <fieldset className="position-edit">
+        <legend>Período y apertura</legend>
+        <div className="row">
+          <label>Apertura<input type="datetime-local" value={opensAt} onChange={(e) => setOpensAt(e.target.value)} required /></label>
+          <label>Cierre<input type="datetime-local" value={closesAt} onChange={(e) => setClosesAt(e.target.value)} required /></label>
+        </div>
+        <label className="switch">
+          <input type="checkbox" checked={autoOpen} onChange={(e) => setAutoOpen(e.target.checked)} />
+          Abrir automáticamente en la fecha de apertura
+        </label>
+        <p className="help">{autoOpen ? 'El sistema abrirá la votación solo, a la hora indicada.' : 'La votación se abrirá cuando alguien pulse "Abrir ahora".'} El cierre siempre es automático.</p>
+        <label>Si al abrir hay votantes habilitados sin código
+          <select value={codesOnOpen} onChange={(e) => setCodesOnOpen(e.target.value as 'ISSUE' | 'BLOCK')}>
+            <option value="ISSUE">Emitirlos y enviarlos automáticamente antes de abrir</option>
+            <option value="BLOCK">No abrir hasta que la comisión los emita</option>
+          </select>
+        </label>
+      </fieldset>
+
       <div className="row">
         <label>Largo del código<input type="number" min={6} max={16} value={codeLength} onChange={(e) => setCodeLength(Number(e.target.value))} /></label>
         <label>Quórum % (opcional)<input type="number" min={1} max={100} value={quorum} onChange={(e) => setQuorum(e.target.value)} /></label>
       </div>
+
+      <fieldset className="position-edit">
+        <legend>Candidatos desde archivo (opcional)</legend>
+        <TemplateLinks kind="candidatos" />
+        <input type="file" accept=".xlsx,.csv,text/csv" aria-label="Archivo de candidatos"
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) loadCandidates(f); }} />
+        {candidateMsg && (candidateMsg.errors ? <FileErrors errors={candidateMsg.errors} /> : <p className="notice ok">{candidateMsg.text}</p>)}
+      </fieldset>
+
       {positions.map((p, i) => (
         <fieldset key={i} className="position-edit">
           <legend>Cargo {i + 1}</legend>
@@ -148,8 +226,21 @@ function CreateElection() {
       <button type="button" className="btn" onClick={() => setPositions((ps) => [...ps, { name: '', seats: 1, minSelection: 0, maxSelection: 1, candidates: '' }])}>
         + Agregar cargo
       </button>
+
+      <fieldset className="position-edit">
+        <legend>Padrón (opcional, también puedes cargarlo después)</legend>
+        <TemplateLinks kind="padron" />
+        <input type="file" accept=".xlsx,.csv,text/csv" aria-label="Archivo de padrón"
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) checkRoll(f); }} />
+        {rollFile && rollCheck && !rollCheck.errors.length && (
+          <p className="notice ok">{rollFile.name}: {rollCheck.total} empresas, {rollCheck.eligible} habilitadas{rollCheck.notEligible ? `, ${rollCheck.notEligible} bloqueadas` : ''}. Se cargará al crear el proceso.</p>
+        )}
+        <FileErrors errors={rollCheck?.errors} />
+        {rollFile && <button type="button" className="btn small" onClick={() => { setRollFile(null); setRollCheck(null); }}>Quitar padrón</button>}
+      </fieldset>
+
       {error && <p className="error" role="alert">{error}</p>}
-      <button className="btn primary">Crear proceso</button>
+      <button className="btn primary" disabled={busy}>{busy ? 'Creando…' : 'Crear proceso'}</button>
     </form>
   );
 }

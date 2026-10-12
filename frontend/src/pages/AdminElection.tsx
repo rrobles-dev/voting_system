@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, ApiError } from '../api/client';
-import type { ActaVerification, Annulment, AuditEvent, Election, ParticipationReport, Results } from '../api/types';
+import type { ActaVerification, Annulment, AuditEvent, Election, IssueResult, ParticipationReport, Results } from '../api/types';
+import { FileErrors, TemplateLinks } from '../components/Templates';
 import { STATUS_LABEL } from './AdminElections';
 
 type Tab = 'participacion' | 'consola' | 'resultados' | 'padron' | 'anulaciones';
 
 const EVENT_LABEL: Record<string, string> = {
-  ELECTION_CREATED: 'Proceso creado', ROLL_IMPORTED: 'Padrón importado', CODE_ISSUED: 'Código emitido',
+  ELECTION_CREATED: 'Proceso creado', AUTO_OPEN_BLOCKED: 'Apertura automática bloqueada', ROLL_IMPORTED: 'Padrón importado', CODE_ISSUED: 'Código emitido',
   CODE_REISSUED: 'Código reemitido', ELECTION_OPEN: 'Votación abierta', ELECTION_CLOSED: 'Votación cerrada',
   ELECTION_TALLIED: 'Escrutinio publicado', ACTA_ISSUED: 'Acta oficial emitida', TIE_RESOLVED: 'Empate resuelto (acta complementaria)',
   MEMBERS_NOTIFIED: 'Resultados notificados a los socios', PUBLIC_RESULTS_ENABLED: 'Resultados públicos habilitados',
@@ -23,15 +24,25 @@ export function AdminElection() {
   const [tab, setTab] = useState<Tab>('participacion');
   const [flash, setFlash] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [issuedCodes, setIssuedCodes] = useState<{ organization: string; code?: string }[]>([]);
+  const [roll, setRoll] = useState<{ total: number; eligible: number } | null>(null);
 
-  const load = useCallback(() => api.get<Election>(`/admin/elections/${id}`, true).then(setElection), [id]);
+  const load = useCallback(() => {
+    api.get<Election>(`/admin/elections/${id}`, true).then(setElection);
+    api.get<ParticipationReport>(`/admin/elections/${id}/participation`, true)
+      .then((p) => setRoll({ total: p.voters.length, eligible: p.eligible }))
+      .catch(() => null);
+  }, [id]);
   useEffect(() => { load(); }, [load]);
 
-  async function action(path: string, ok: string, after?: (r: any) => void) {
+  /**
+   * El mensaje de éxito se arma con lo que la API REALMENTE hizo (cuántos códigos, cuántos correos),
+   * nunca con un texto fijo: un "enviado" que no ocurrió es peor que un error.
+   */
+  async function action<T>(path: string, describe: (r: T) => { kind: 'ok' | 'error'; text: string }, after?: (r: T) => void) {
     setFlash(null);
     try {
-      const r = await api.post(`/admin/elections/${id}${path}`, {}, true);
-      setFlash({ kind: 'ok', text: ok });
+      const r = await api.post<T>(`/admin/elections/${id}${path}`, {}, true);
+      setFlash(describe(r));
       after?.(r);
       load();
     } catch (err) {
@@ -52,21 +63,43 @@ export function AdminElection() {
             <span className={`badge ${election.status}`}>{STATUS_LABEL[election.status]}</span>{' '}
             {new Date(election.opensAt).toLocaleString('es-CL')} → {new Date(election.closesAt).toLocaleString('es-CL')}
           </p>
+          {election.status === 'DRAFT' && (
+            <p className="muted small">
+              {election.autoOpen ? 'Apertura automática en la fecha indicada' : 'Apertura manual (botón "Abrir ahora")'} ·{' '}
+              {election.codesOnOpen === 'ISSUE' ? 'los códigos faltantes se emiten al abrir' : 'no abre si faltan códigos'} ·{' '}
+              {roll ? (roll.total ? `${roll.total} en el padrón (${roll.eligible} habilitados)` : 'sin padrón cargado') : ''}
+            </p>
+          )}
         </div>
         <div className="toolbar">
           {['DRAFT', 'OPEN'].includes(election.status) && (
-            <button className="btn" onClick={() => action('/codes/issue', 'Códigos emitidos y enviados', (r) => setIssuedCodes(r.voters))}>
+            <button className="btn" disabled={!roll?.eligible} title={!roll?.total ? 'Carga el padrón primero' : undefined}
+              onClick={() => action<IssueResult>('/codes/issue', (r) => r.emailed === r.issued
+                ? { kind: 'ok', text: `Se emitieron ${r.issued} código(s) y se enviaron por correo.` }
+                : { kind: 'error', text: `Se emitieron ${r.issued} código(s), pero solo ${r.emailed} correo(s) se enviaron. Revisa el servidor de correo y reemite los que faltan desde Participación.` },
+                (r) => setIssuedCodes(r.voters))}>
               Emitir códigos
             </button>
           )}
-          {election.status === 'DRAFT' && <button className="btn primary" onClick={() => confirm('¿Abrir la votación ahora?') && action('/open', 'Votación abierta')}>Abrir ahora</button>}
+          {election.status === 'DRAFT' && (
+            <button className="btn primary" disabled={!roll?.eligible}
+              onClick={() => confirm(election.codesOnOpen === 'ISSUE'
+                ? '¿Abrir la votación ahora? Los votantes sin código lo recibirán automáticamente.'
+                : '¿Abrir la votación ahora?') && action('/open', () => ({ kind: 'ok', text: 'Votación abierta' }))}>
+              Abrir ahora
+            </button>
+          )}
           {election.status === 'OPEN' && (
             <>
-              <button className="btn" onClick={() => action('/reminders', 'Recordatorios enviados a quienes no han votado')}>Enviar recordatorios</button>
-              <button className="btn danger" onClick={() => confirm('¿Cerrar la votación ahora? No se puede reabrir.') && action('/close', 'Votación cerrada')}>Cerrar ahora</button>
+              <button className="btn" onClick={() => action<{ sent: number; pending: number }>('/reminders', (r) => r.sent === r.pending
+                ? { kind: 'ok', text: `Recordatorio enviado a ${r.sent} votante(s) pendiente(s).` }
+                : { kind: 'error', text: `Recordatorio enviado a ${r.sent} de ${r.pending} pendientes. Algunos correos fallaron.` })}>
+                Enviar recordatorios
+              </button>
+              <button className="btn danger" onClick={() => confirm('¿Cerrar la votación ahora? No se puede reabrir.') && action('/close', () => ({ kind: 'ok', text: 'Votación cerrada' }))}>Cerrar ahora</button>
             </>
           )}
-          {election.status === 'CLOSED' && <button className="btn primary" onClick={() => action('/tally', 'Escrutinio publicado: acta oficial v1 emitida', () => setTab('resultados'))}>Publicar escrutinio</button>}
+          {election.status === 'CLOSED' && <button className="btn primary" onClick={() => action<{ pendingTies: boolean }>('/tally', (r) => ({ kind: 'ok', text: r.pendingTies ? 'Acta oficial v1 emitida con empate pendiente de resolución' : 'Acta oficial v1 emitida' }), () => setTab('resultados'))}>Publicar escrutinio</button>}
         </div>
       </header>
       {flash && <p className={`notice ${flash.kind === 'ok' ? 'ok' : 'warn'}`} role="status">{flash.text}</p>}
@@ -367,7 +400,7 @@ function RollTab({ election, onDone }: { election: Election; onDone: () => void 
 
   async function upload(file: File) {
     try {
-      const r = await api.post<{ total: number; eligible: number }>(`/admin/elections/${election.id}/voters/import`, { csv: await file.text() }, true);
+      const r = await api.postFile<{ total: number; eligible: number }>(`/admin/elections/${election.id}/voters/import`, file);
       setMsg({ kind: 'ok', text: `Padrón cargado: ${r.total} registros, ${r.eligible} habilitados.` });
       onDone();
     } catch (err) {
@@ -382,14 +415,11 @@ function RollTab({ election, onDone }: { election: Election; onDone: () => void 
     <section className="grid-2">
       <div className="card">
         <h2>Padrón</h2>
-        <p className="help">CSV con columnas <code>ref, organization, email, weight, eligible</code>. Reemplaza el padrón completo. Solo en borrador.</p>
-        <input type="file" accept=".csv,text/csv" disabled={election.status !== 'DRAFT'} onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
-        {msg && (
-          <div className={`notice ${msg.kind}`}>
-            {msg.text}
-            {msg.errors && <ul>{msg.errors.map((x) => <li key={x}>{x}</li>)}</ul>}
-          </div>
-        )}
+        <p className="help">Excel (.xlsx) o CSV, con separador coma o punto y coma. Reemplaza el padrón completo. Solo en borrador.</p>
+        <TemplateLinks kind="padron" />
+        <input type="file" accept=".xlsx,.csv,text/csv" disabled={election.status !== 'DRAFT'}
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) upload(f); }} />
+        {msg && (msg.errors?.length ? <><p className="notice warn">{msg.text}</p><FileErrors errors={msg.errors} /></> : <p className={`notice ${msg.kind}`}>{msg.text}</p>)}
       </div>
       <div className="card">
         <h2>Reportes</h2>

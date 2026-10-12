@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { parse } from 'csv-parse/sync';
+import { readTable } from '../imports/tabular';
+import { parseRoll } from '../imports/formats';
 import { DataSource } from 'typeorm';
 import { AccessCode, CodeStatus, Election, ElectionStatus, Participation, Voter } from '../database/entities';
 import { AuditService } from '../audit/audit.service';
@@ -7,17 +8,6 @@ import { MailService } from '../mail/mail.service';
 import { generateCode, hashCode } from '../common/crypto';
 import { env } from '../common/env';
 import { MESSAGES } from '../common/messages';
-
-interface CsvRow {
-  ref: string;
-  organization: string;
-  email: string;
-  weight?: string;
-  eligible?: string;
-}
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const isEligible = (v?: string) => !['false', 'no', '0'].includes((v ?? 'true').toLowerCase());
 
 @Injectable()
 export class VotersService {
@@ -36,50 +26,51 @@ export class VotersService {
     return qb.orderBy('v.organization', 'ASC').getMany();
   }
 
+  /** Lee y valida un padrón (Excel o CSV) sin guardar nada. Lo usa también la validación previa del formulario. */
+  async validateRoll(buffer: Buffer, filename: string) {
+    let table;
+    try {
+      table = await readTable(buffer, filename, 'Padrón');
+    } catch (e) {
+      throw new BadRequestException(`No se pudo leer el archivo: ${(e as Error).message}`);
+    }
+    const { rows, errors } = parseRoll(table);
+    const eligible = rows.filter((r) => r.eligible).length;
+    return { rows, errors, summary: { total: rows.length, eligible, notEligible: rows.length - eligible } };
+  }
+
   /**
-   * Importa el padrón desde CSV. Columnas: ref, organization, email, weight, eligible.
-   * Valida TODO antes de escribir: si una fila falla, no se importa nada
-   * (mejor un error claro que un padrón a medias).
+   * Importa el padrón (Excel o CSV). Valida TODO antes de escribir: si una fila falla,
+   * no se importa nada (mejor un error claro que un padrón a medias).
    */
-  async importCsv(electionId: string, csv: string) {
+  async importRoll(electionId: string, buffer: Buffer, filename: string) {
     const election = await this.ds.getRepository(Election).findOneBy({ id: electionId });
     if (!election) throw new NotFoundException('Elección no encontrada');
     if (election.status !== ElectionStatus.DRAFT) throw new BadRequestException('El padrón solo se carga en estado borrador');
 
-    let rows: CsvRow[];
-    try {
-      rows = parse(csv, { columns: true, skip_empty_lines: true, trim: true, bom: true });
-    } catch (e) {
-      throw new BadRequestException(`No se pudo leer el CSV: ${(e as Error).message}`);
-    }
-    const errors: string[] = [];
-    const seen = new Set<string>();
-    rows.forEach((r, i) => {
-      const line = i + 2; // +1 por el encabezado, +1 porque las filas parten en 1
-      if (!r.ref) errors.push(`Fila ${line}: falta ref`);
-      if (!r.organization) errors.push(`Fila ${line}: falta organization`);
-      if (!EMAIL_RE.test(r.email ?? '')) errors.push(`Fila ${line}: email inválido`);
-      if (r.weight && !/^[1-9]\d*$/.test(r.weight)) errors.push(`Fila ${line}: weight debe ser entero positivo`);
-      if (seen.has(r.ref)) errors.push(`Fila ${line}: ref duplicado (${r.ref})`);
-      seen.add(r.ref);
-    });
-    if (rows.length === 0) errors.push('El CSV no tiene filas');
-    if (errors.length) throw new BadRequestException({ message: 'CSV inválido', errors });
+    const { rows, errors, summary } = await this.validateRoll(buffer, filename);
+    if (errors.length) throw new BadRequestException({ message: 'El padrón tiene errores', errors });
 
-    const eligible = rows.filter((r) => isEligible(r.eligible)).length;
     await this.ds.transaction(async (em) => {
       await em.delete(Voter, { electionId }); // reemplaza el padrón completo
       await em.insert(Voter, rows.map((r) => ({
-        electionId,
-        externalRef: r.ref,
-        organization: r.organization,
-        email: r.email,
-        weight: r.weight ? Number(r.weight) : 1,
-        eligible: isEligible(r.eligible),
+        electionId, externalRef: r.ref, organization: r.organization, email: r.email, weight: r.weight, eligible: r.eligible,
       })));
-      await this.audit.log(em, electionId, 'ROLL_IMPORTED', 'ADMIN', { total: rows.length, eligible });
+      await this.audit.log(em, electionId, 'ROLL_IMPORTED', 'ADMIN', { total: summary.total, eligible: summary.eligible, file: filename });
     });
-    return { total: rows.length, eligible, notEligible: rows.length - eligible };
+    return summary;
+  }
+
+  /** Elegibles pendientes de votar que no tienen un código activo. */
+  async votersWithoutCode(electionId: string) {
+    const pending = await this.pendingVoters(electionId);
+    if (!pending.length) return [];
+    const active = await this.ds.getRepository(AccessCode).createQueryBuilder('c')
+      .select('c.voterId', 'voterId')
+      .where('c.voterId IN (:...ids) AND c.status = :s', { ids: pending.map((v) => v.id), s: CodeStatus.ACTIVE })
+      .getRawMany<{ voterId: string }>();
+    const withCode = new Set(active.map((a) => a.voterId));
+    return pending.filter((v) => !withCode.has(v.id));
   }
 
   /**
@@ -87,29 +78,34 @@ export class VotersService {
    * Si un votante ya tenía código activo, se invalida y se emite uno nuevo:
    * nunca hay dos códigos válidos para la misma persona.
    */
-  async issueCodes(electionId: string, voterId?: string) {
+  async issueCodes(electionId: string, voterId?: string, opts: { onlyMissing?: boolean; actor?: string } = {}) {
     const election = await this.ds.getRepository(Election).findOneBy({ id: electionId });
     if (!election) throw new NotFoundException('Elección no encontrada');
     if (![ElectionStatus.DRAFT, ElectionStatus.OPEN].includes(election.status)) {
       throw new BadRequestException('La elección ya cerró');
     }
 
-    const voters = await this.pendingVoters(electionId, voterId);
+    // onlyMissing: no toca a quienes ya tienen un código activo (apertura automática)
+    const voters = opts.onlyMissing ? await this.votersWithoutCode(electionId) : await this.pendingVoters(electionId, voterId);
     if (voterId && voters.length === 0) throw new BadRequestException('Votante no elegible o ya votó');
+    // Sin destinatarios no hay nada que informar como "emitido": se explica por qué.
+    if (voters.length === 0 && !opts.onlyMissing) throw new BadRequestException(await this.whyNobody(electionId));
 
-    const issued: { voterId: string; organization: string; code?: string }[] = [];
+    const issued: { voterId: string; organization: string; emailed: boolean; code?: string }[] = [];
     for (const v of voters) {
       const code = generateCode(election.codeLength);
       await this.ds.transaction(async (em) => {
         await em.update(AccessCode, { voterId: v.id, status: CodeStatus.ACTIVE }, { status: CodeStatus.INVALIDATED });
         await em.insert(AccessCode, { voterId: v.id, codeHash: hashCode(code, env.codePepper) });
-        await this.audit.log(em, electionId, voterId ? 'CODE_REISSUED' : 'CODE_ISSUED', 'ADMIN', { voterId: v.id });
+        await this.audit.log(em, electionId, voterId ? 'CODE_REISSUED' : 'CODE_ISSUED', opts.actor ?? 'ADMIN', { voterId: v.id });
       });
-      await this.mail.sendCode(v.email, v.organization, election.title, code, election.closesAt).catch(() => null);
+      // El código queda emitido aunque el correo falle: se informa cuántos llegaron para poder reemitir.
+      const emailed = await this.mail.sendCode(v.email, v.organization, election.title, code, election.closesAt)
+        .then(() => true).catch(() => false);
       // Solo en desarrollo: se devuelven los códigos para probar sin abrir el correo.
-      issued.push({ voterId: v.id, organization: v.organization, ...(env.exposeCodes ? { code } : {}) });
+      issued.push({ voterId: v.id, organization: v.organization, emailed, ...(env.exposeCodes ? { code } : {}) });
     }
-    return { issued: issued.length, voters: issued };
+    return { issued: issued.length, emailed: issued.filter((i) => i.emailed).length, voters: issued };
   }
 
   /** Participación: quién votó y quién no. NUNCA qué votaron. */
@@ -146,9 +142,22 @@ export class VotersService {
     if (!election) throw new NotFoundException('Elección no encontrada');
     if (election.status !== ElectionStatus.OPEN) throw new BadRequestException('Solo se recuerda con la elección abierta');
     const pending = await this.pendingVoters(electionId);
+    if (pending.length === 0) throw new BadRequestException(await this.whyNobody(electionId));
     const msg = MESSAGES.email.reminder(election.title, election.closesAt);
     const results = await Promise.allSettled(pending.map((v) => this.mail.sendNotice(v.email, msg.subject, msg.body)));
-    await this.ds.transaction((em) => this.audit.log(em, electionId, 'REMINDERS_SENT', 'ADMIN', { count: pending.length }));
-    return { sent: results.filter((r) => r.status === 'fulfilled').length, pending: pending.length };
+    const sent = results.filter((r) => r.status === 'fulfilled').length;
+    if (sent === 0) throw new BadRequestException('No se pudo enviar ningún recordatorio. Revisa el servidor de correo.');
+    await this.ds.transaction((em) => this.audit.log(em, electionId, 'REMINDERS_SENT', 'ADMIN', { pending: pending.length, sent }));
+    return { sent, pending: pending.length };
+  }
+
+  /** Explica por qué no hay destinatarios, en vez de informar un éxito vacío. */
+  private async whyNobody(electionId: string) {
+    const repo = this.ds.getRepository(Voter);
+    const total = await repo.countBy({ electionId });
+    if (total === 0) return 'No hay padrón cargado: carga el padrón antes de emitir códigos o enviar avisos';
+    const eligible = await repo.countBy({ electionId, eligible: true });
+    if (eligible === 0) return 'El padrón no tiene votantes habilitados';
+    return 'Todos los votantes habilitados ya votaron';
   }
 }

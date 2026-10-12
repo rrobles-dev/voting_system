@@ -20,6 +20,7 @@ import { PublicResultsController } from './results/public.controller';
 import { AnnulmentsController } from './annulments/annulments.controller';
 import { AnnulmentsService } from './annulments/annulments.service';
 import { SchedulerService } from './scheduler/scheduler.service';
+import { TemplatesController } from './imports/templates.controller';
 
 /**
  * Módulo raíz. En una app más grande cada dominio tendría su propio @Module;
@@ -35,7 +36,7 @@ import { SchedulerService } from './scheduler/scheduler.service';
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
   ],
-  controllers: [ElectionsController, VotersController, VotingController, ResultsController, PublicResultsController, AnnulmentsController],
+  controllers: [ElectionsController, VotersController, VotingController, ResultsController, PublicResultsController, AnnulmentsController, TemplatesController],
   providers: [
     ElectionsService, VotersService, VotingService, ResultsService, ActasService, AnnulmentsService, SchedulerService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },

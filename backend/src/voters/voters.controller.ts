@@ -10,17 +10,20 @@ import { VotersService } from './voters.service';
 export class VotersController {
   constructor(private voters: VotersService) {}
 
-  /** Acepta el CSV como archivo (multipart) o como texto en { csv }. */
+  /**
+   * Padrón como archivo Excel (.xlsx) o CSV (separador , o ;) en el campo "file".
+   * Se mantiene { csv } en JSON por compatibilidad con scripts y tests.
+   */
   @Post('voters/import')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
   import(
     @Param('id', ParseUUIDPipe) id: string,
     @UploadedFile() file?: Express.Multer.File,
     @Body('csv') csvText?: string,
   ) {
-    const csv = file?.buffer.toString('utf8') ?? csvText;
-    if (!csv) throw new BadRequestException('Envía el CSV como archivo "file" o en el campo "csv"');
-    return this.voters.importCsv(id, csv);
+    if (file) return this.voters.importRoll(id, file.buffer, file.originalname);
+    if (csvText) return this.voters.importRoll(id, Buffer.from(csvText, 'utf8'), 'padron.csv');
+    throw new BadRequestException('Adjunta el padrón en el campo "file" (.xlsx o .csv)');
   }
 
   @Post('codes/issue')

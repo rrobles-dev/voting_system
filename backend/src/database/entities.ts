@@ -16,6 +16,11 @@ export enum ElectionStatus {
   CLOSED = 'CLOSED',   // cerrada, sin escrutinio publicado
   TALLIED = 'TALLIED', // escrutada
 }
+/** Qué hacer al abrir si hay votantes habilitados sin código activo. */
+export enum CodesOnOpen {
+  ISSUE = 'ISSUE', // emitirlos automáticamente justo antes del aviso de apertura
+  BLOCK = 'BLOCK', // no abrir hasta que el admin los emita
+}
 export enum CodeStatus { ACTIVE = 'ACTIVE', USED = 'USED', INVALIDATED = 'INVALIDATED' }
 export enum BallotStatus { VALID = 'VALID', ANNULLED = 'ANNULLED' }
 export enum AnnulmentStatus { REQUESTED = 'REQUESTED', APPROVED = 'APPROVED', REJECTED = 'REJECTED' }
@@ -31,6 +36,8 @@ export class Election {
   @Column({ default: 9 }) codeLength: number;
   @Column({ type: 'int', nullable: true }) quorumPercent: number | null; // null = sin quórum
   @Column({ default: 90 }) retentionDays: number;
+  @Column({ default: true }) autoOpen: boolean; // abrir solo al llegar opensAt (el cierre siempre es automático)
+  @Column({ type: 'enum', enum: CodesOnOpen, default: CodesOnOpen.ISSUE }) codesOnOpen: CodesOnOpen;
   // Publicación posterior al escrutinio: acciones manuales, bloqueadas si hay empates pendientes
   @Column({ type: 'timestamptz', nullable: true }) membersNotifiedAt: Date | null;
   @Column({ default: false }) publicResults: boolean;

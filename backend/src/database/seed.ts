@@ -45,7 +45,7 @@ async function main() {
   ];
   const csv = ['ref,organization,email,weight,eligible',
     ...orgs.map((o, i) => `76.${100 + i}.${200 + i}-${i},${o},socio${i + 1}@example.org,1,${i !== 9}`)].join('\n');
-  const roll = await voters.importCsv(election.id, csv);
+  const roll = await voters.importRoll(election.id, Buffer.from(csv, 'utf8'), 'padron.csv');
 
   console.log(`Elección creada: ${election.id}`);
   console.log(`Padrón: ${roll.total} empresas (${roll.eligible} elegibles)`);

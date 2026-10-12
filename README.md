@@ -25,10 +25,13 @@ El votante recibe un **código de recibo**. Con él puede verificar que su voto 
 
 ## Reglas implementadas (v1)
 
-- Un voto por empresa, con padrón entregado por el admin (CSV). Las empresas sin cuotas al día quedan bloqueadas (`eligible=false`).
+- Un voto por empresa, con padrón entregado por el admin. Las empresas sin cuotas al día quedan bloqueadas (`habilitado = no`).
+- **Plantillas descargables** de padrón y candidatos en Excel (.xlsx, con hoja de instrucciones y lista desplegable) y CSV. La carga acepta .xlsx o CSV con separador `,` o `;`, porque **Excel en español guarda los CSV con punto y coma**. Los archivos se validan antes de crear el proceso y se informan **todos** los errores con su número de fila.
 - Códigos de 9 caracteres (configurable) con mayúsculas y minúsculas, sin caracteres ambiguos (`0/O`, `1/l/I`). Se guardan hasheados con HMAC, nunca en claro.
 - Varios cargos por proceso, cada uno con cupos y mínimo/máximo de marcas.
-- Apertura y cierre automáticos por fecha, con avisos por correo.
+- Apertura **automática o manual** (configurable por proceso) y cierre siempre automático, con avisos por correo.
+- **Política de códigos al abrir** (configurable): emitir automáticamente los que falten, o no abrir hasta que la comisión los emita. Aplica tanto a la apertura automática como al botón "Abrir ahora", y un bloqueo queda registrado en la consola.
+- **Sin falsos positivos**: emitir códigos o enviar recordatorios sin destinatarios devuelve un error que explica por qué (sin padrón, sin habilitados, todos votaron), y los mensajes informan la cantidad real de códigos y correos enviados.
 - **Sin tendencias durante la votación**: la API rechaza consultar resultados si el proceso no está cerrado. Durante la votación solo se ve la participación (quién votó, no qué).
 - Recordatorios a quienes no han votado y reemisión de código (invalida el anterior).
 - Empates en el último cupo: el sistema los **detecta y marca**; se resuelven fuera del sistema según el reglamento y el admin registra el resultado.
@@ -74,7 +77,8 @@ El votante recibe un **código de recibo**. Con él puede verificar que su voto 
 3. **HMAC en vez de bcrypt para los códigos**: bcrypt usa un salt aleatorio por fila, lo que impide buscar `WHERE codeHash = ?`. HMAC con un secreto del servidor (pepper) permite la búsqueda e impide que alguien con una copia de la base pruebe códigos offline.
 4. **Mensajes de error genéricos**: "código inválido, ya utilizado o fuera de plazo" no revela cuál de los tres casos es, para no ayudar a quien intenta adivinar códigos.
 5. **JSON canónico en el log**: Postgres `jsonb` reordena las claves, así que el hash se calcula sobre el JSON con claves ordenadas.
-6. **Rate limit configurable** (`VOTING_RATE_LIMIT`): varios votantes pueden compartir IP (misma oficina, asamblea presencial). Un límite muy estricto bloquearía a votantes legítimos.
+6. **Mensajes basados en lo que realmente ocurrió**: la interfaz arma el mensaje de éxito con los números que devuelve la API (códigos emitidos, correos entregados), nunca con un texto fijo. En un sistema electoral, un "enviado" que no ocurrió es peor que un error.
+7. **Rate limit configurable** (`VOTING_RATE_LIMIT`): varios votantes pueden compartir IP (misma oficina, asamblea presencial). Un límite muy estricto bloquearía a votantes legítimos.
 
 ## Correr en local
 
@@ -108,7 +112,7 @@ Flujo de prueba: en el panel, abre la elección de ejemplo, pulsa **Emitir códi
 ## Pruebas
 
 ```bash
-cd backend && npm test              # unitarias: generación de códigos, hash, cifrado, escrutinio, empates
+cd backend && npm test              # unitarias: códigos, hash, cifrado, escrutinio, empates, lectura de Excel/CSV
 
 cd e2e
 npm install
@@ -127,7 +131,9 @@ npx playwright show-report
 | POST | `/api/voting/ballot` | público (código) |
 | GET | `/api/voting/receipt/:receipt` | público |
 | GET/POST | `/api/admin/elections` | Admin |
-| POST | `/api/admin/elections/:id/voters/import` | Admin |
+| GET | `/api/admin/templates/{padron,candidatos}.{xlsx,csv}` | Admin |
+| POST | `/api/admin/templates/padron/validate` · `/candidatos/parse` (multipart `file`) | Admin |
+| POST | `/api/admin/elections/:id/voters/import` (multipart `file`: .xlsx o .csv) | Admin |
 | POST | `/api/admin/elections/:id/codes/issue` | Admin |
 | POST | `/api/admin/elections/:id/voters/:voterId/reissue` | Admin |
 | POST | `/api/admin/elections/:id/open` · `/close` | Admin |

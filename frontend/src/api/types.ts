@@ -12,6 +12,7 @@ export type ElectionStatus = 'DRAFT' | 'OPEN' | 'CLOSED' | 'TALLIED';
 export interface Election {
   id: string; title: string; description: string | null; status: ElectionStatus;
   opensAt: string; closesAt: string; codeLength: number; quorumPercent: number | null; positions?: Position[];
+  autoOpen: boolean; codesOnOpen: 'ISSUE' | 'BLOCK';
 }
 export interface ParticipationReport {
   status: ElectionStatus; eligible: number; voted: number; percent: number;
@@ -40,3 +41,6 @@ export interface PublicResults {
 }
 export interface AuditEvent { seq: number; type: string; actor: string; payload: Record<string, unknown>; createdAt: string; hash: string }
 export interface Annulment { id: string; voterId: string; reason: string; status: 'REQUESTED' | 'APPROVED' | 'REJECTED'; requestedAt: string }
+export interface RollValidation { total: number; eligible: number; notEligible: number; errors: string[] }
+export interface ParsedCandidates { positions: { position: string; candidates: { name: string; detail?: string }[] }[]; errors: string[] }
+export interface IssueResult { issued: number; emailed: number; voters: { organization: string; emailed: boolean; code?: string }[] }

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { Election, ElectionStatus, Voter } from '../database/entities';
+import { CodesOnOpen, Election, ElectionStatus, Voter } from '../database/entities';
+import { VotersService } from '../voters/voters.service';
 import { AuditService } from '../audit/audit.service';
 import { MailService } from '../mail/mail.service';
 import { MESSAGES } from '../common/messages';
@@ -22,7 +23,12 @@ const TRANSITIONS: Record<ElectionStatus, ElectionStatus[]> = {
 
 @Injectable()
 export class ElectionsService {
-  constructor(private ds: DataSource, private audit: AuditService, private mail: MailService) {}
+  constructor(
+    private ds: DataSource,
+    private audit: AuditService,
+    private mail: MailService,
+    private voters: VotersService,
+  ) {}
 
   async create(dto: CreateElectionDto) {
     if (new Date(dto.closesAt) <= new Date(dto.opensAt)) {
@@ -44,6 +50,8 @@ export class ElectionsService {
         codeLength: dto.codeLength ?? 9,
         quorumPercent: dto.quorumPercent ?? null,
         retentionDays: dto.retentionDays ?? 90,
+        autoOpen: dto.autoOpen ?? true,
+        codesOnOpen: dto.codesOnOpen ?? CodesOnOpen.ISSUE,
         // cascade: true en la entidad → guardar la elección guarda cargos y candidatos
         positions: dto.positions.map((p, i) => ({
           name: p.name,
@@ -83,6 +91,16 @@ export class ElectionsService {
     if (to === ElectionStatus.OPEN) {
       const voters = await this.ds.getRepository(Voter).count({ where: { electionId: id } });
       if (voters === 0) throw new BadRequestException('No se puede abrir sin padrón cargado');
+
+      // Nunca abrir con votantes habilitados que no tienen con qué votar.
+      const missing = await this.voters.votersWithoutCode(id);
+      if (missing.length > 0) {
+        if (e.codesOnOpen === CodesOnOpen.BLOCK) {
+          throw new BadRequestException(`Faltan ${missing.length} código(s) por emitir. Emítelos antes de abrir.`);
+        }
+        // Se emiten ANTES del aviso de apertura: el correo con el código llega primero.
+        await this.voters.issueCodes(id, undefined, { onlyMissing: true, actor });
+      }
     }
     // Apertura manual anticipada: la fecha de apertura pasa a ser "ahora",
     // si no, el votante tendría la elección abierta pero fuera de plazo.

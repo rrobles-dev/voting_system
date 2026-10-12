@@ -1,0 +1,4 @@
+RUT o ID;Empresa;Correo electrónico;Peso;Habilitado
+76.1-1;Empresa Uno;uno@example.org;1;Sí
+76.2-2;Empresa Dos;dos@example.org;1;Sí
+76.3-3;Empresa Tres;tres@example.org;1;No
