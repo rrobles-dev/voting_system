@@ -33,7 +33,9 @@ export class VotingService {
     const now = new Date();
     const e = found?.voter.election;
     if (!found || found.status !== CodeStatus.ACTIVE || !found.voter.eligible || !e
-      || e.status !== ElectionStatus.OPEN || now < e.opensAt || now > e.closesAt) {
+      || e.status !== ElectionStatus.OPEN || now < e.opensAt
+      // Con cierre manual la fecha es referencial: manda el estado OPEN/CLOSED que fija la comisión.
+      || (e.autoClose && now > e.closesAt)) {
       throw new UnauthorizedException(INVALID_CODE);
     }
     return found;
@@ -54,6 +56,7 @@ export class VotingService {
         title: election.title,
         description: election.description,
         closesAt: election.closesAt,
+        autoClose: election.autoClose,
         positions: election.positions.map((p) => ({
           id: p.id,
           name: p.name,

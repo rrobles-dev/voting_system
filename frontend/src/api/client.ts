@@ -37,6 +37,8 @@ async function request<T>(method: string, path: string, body?: unknown, admin = 
 export const api = {
   get: <T>(p: string, admin = false) => request<T>('GET', p, undefined, admin),
   post: <T>(p: string, body?: unknown, admin = false) => request<T>('POST', p, body ?? {}, admin),
+  put: <T>(p: string, body: unknown) => request<T>('PUT', p, body, true),
+  patch: <T>(p: string, body: unknown) => request<T>('PATCH', p, body, true),
   /** Sube un archivo (multipart) en el campo "file". */
   async postFile<T>(path: string, file: File): Promise<T> {
     const body = new FormData();

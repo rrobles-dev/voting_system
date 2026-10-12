@@ -155,7 +155,7 @@ input:focus, textarea:focus, select:focus, button:focus-visible { outline: none;
 .progress { position: relative; height: 12px; background: var(--border); border-radius: 6px; margin-bottom: 16px; }
 .progress > div { height: 100%; background: var(--accent); border-radius: 6px; transition: width 0.4s; }
 .quorum-mark { position: absolute; top: -4px; width: 2px; height: 20px; background: var(--warn); }
-.filters { display: flex; gap: 8px; margin-bottom: 12px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
 .chip { font: inherit; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
 .chip.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 
@@ -204,6 +204,21 @@ tr:last-child td { border-bottom: none; }
 .template-links { margin: 0 0 8px; }
 input[type='file'] { padding: 10px; }
 .position-edit .switch { margin-bottom: 4px; }
+
+/* Formulario de proceso y revisión */
+.choice { display: grid; gap: 6px; margin-bottom: 12px; }
+.choice-label { font-weight: 600; }
+.radio { display: flex; align-items: center; gap: 8px; font-weight: 400; margin: 0; }
+.radio input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+.review-grid { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; margin: 12px 0; }
+.review-grid dt { font-weight: 600; color: var(--muted); }
+.review-grid dd { margin: 0; }
+.review-position { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
+.review-position h3 { margin: 0; font-size: 1.05rem; }
+.review-position ol { margin: 6px 0 0; padding-left: 1.4rem; }
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.add-voter { margin-bottom: 12px; }
+@media (max-width: 640px) { .review-grid { grid-template-columns: 1fr; gap: 2px; } .review-grid dd { margin-bottom: 8px; } }
 
 /* Página pública insertable */
 .public { max-width: 640px; margin: 0 auto; padding: 20px 16px; }

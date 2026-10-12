@@ -5,11 +5,19 @@
 const fmt = (d: Date) =>
   d.toLocaleString('es-CL', { timeZone: 'America/Santiago', dateStyle: 'full', timeStyle: 'short' });
 
+/** Texto del plazo: si el cierre es manual, la fecha es solo referencial y se dice explícitamente. */
+export const closingText = (closesAt: Date, autoClose: boolean) =>
+  autoClose
+    ? `La votación cierra el ${fmt(closesAt)}.`
+    : `Fecha estimada de cierre: ${fmt(closesAt)}. La comisión cerrará el proceso manualmente y lo avisará por correo.`;
+
+type Window = { closesAt: Date; autoClose: boolean };
+
 export const MESSAGES = {
   email: {
     code: {
       subject: (title: string) => `Tu código para votar: ${title}`,
-      body: (org: string, title: string, code: string, closesAt: Date, url: string) =>
+      body: (org: string, title: string, code: string, w: Window, url: string) =>
         `Estimado/a representante de ${org}:
 
 Se ha abierto el proceso "${title}". Tu código personal de votación es:
@@ -19,7 +27,7 @@ Se ha abierto el proceso "${title}". Tu código personal de votación es:
 Ingresa en ${url} y escribe el código tal cual aparece (distingue mayúsculas de minúsculas).
 El código es de un solo uso y es personal: no lo compartas.
 
-La votación cierra el ${fmt(closesAt)}.
+${closingText(w.closesAt, w.autoClose)}
 
 Si no solicitaste este código o tienes problemas para votar, contacta a la comisión electoral.`,
     },
@@ -34,9 +42,9 @@ Guarda este código. Te permite verificar que tu voto fue contado y es el único
 que vincula tu voto contigo: la comisión no puede saber por quién votaste.
 Por eso este correo no incluye tu selección.`,
     },
-    opened: (title: string, closesAt: Date) => ({
+    opened: (title: string, w: Window) => ({
       subject: `Abierta la votación: ${title}`,
-      body: `El proceso "${title}" está abierto hasta el ${fmt(closesAt)}. Revisa el correo con tu código personal.`,
+      body: `El proceso "${title}" está abierto. ${closingText(w.closesAt, w.autoClose)} Revisa el correo con tu código personal.`,
     }),
     closed: (title: string) => ({
       subject: `Cerrada la votación: ${title}`,
@@ -58,9 +66,9 @@ Acta oficial versión ${version}. Huella digital (SHA-256): ${hash}
 
 Gracias por participar.`,
     }),
-    reminder: (title: string, closesAt: Date) => ({
+    reminder: (title: string, w: Window) => ({
       subject: `Recordatorio: aún no has votado en ${title}`,
-      body: `Te recordamos que la votación "${title}" cierra el ${fmt(closesAt)}. Tu participación es importante.`,
+      body: `Te recordamos que la votación "${title}" sigue abierta. ${closingText(w.closesAt, w.autoClose)} Tu participación es importante.`,
     }),
   },
 };

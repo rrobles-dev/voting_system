@@ -23,7 +23,8 @@ export class SchedulerService {
     const repo = this.ds.getRepository(Election);
     // Solo las que tienen apertura automática; las demás esperan el botón "Abrir ahora"
     const toOpen = await repo.findBy({ status: ElectionStatus.DRAFT, autoOpen: true, opensAt: LessThanOrEqual(now), closesAt: MoreThan(now) });
-    const toClose = await repo.findBy({ status: ElectionStatus.OPEN, closesAt: LessThanOrEqual(now) });
+    // Solo cierra sola si tiene cierre automático; con cierre manual espera a la comisión
+    const toClose = await repo.findBy({ status: ElectionStatus.OPEN, autoClose: true, closesAt: LessThanOrEqual(now) });
 
     for (const e of toOpen) {
       // Sin padrón, o faltando códigos con política BLOCK, transition lo rechaza.

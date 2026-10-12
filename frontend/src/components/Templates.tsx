@@ -14,11 +14,11 @@ export function TemplateLinks({ kind }: { kind: 'padron' | 'candidatos' }) {
 }
 
 /** Lista de errores de validación de un archivo, todos juntos para corregir de una vez. */
-export function FileErrors({ errors }: { errors?: string[] }) {
+export function FileErrors({ errors, title }: { errors?: string[]; title?: string }) {
   if (!errors?.length) return null;
   return (
     <div className="notice warn">
-      El archivo tiene {errors.length} problema{errors.length > 1 ? 's' : ''}:
+      {title ?? `El archivo tiene ${errors.length} problema${errors.length > 1 ? 's' : ''}:`}
       <ul>{errors.slice(0, 15).map((e) => <li key={e}>{e}</li>)}</ul>
       {errors.length > 15 && <p className="small">…y {errors.length - 15} más.</p>}
     </div>

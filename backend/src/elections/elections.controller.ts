@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put } from '@nestjs/common';
 import { Roles } from '../auth/roles.guard';
 import { ElectionStatus } from '../database/entities';
 import { ElectionsService } from './elections.service';
@@ -23,6 +23,13 @@ export class ElectionsController {
   @Roles('ADMIN')
   create(@Body() dto: CreateElectionDto) {
     return this.elections.create(dto);
+  }
+
+  /** Editar la configuración completa. Solo en borrador. */
+  @Put(':id')
+  @Roles('ADMIN')
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateElectionDto) {
+    return this.elections.update(id, dto);
   }
 
   /** Apertura/cierre manual. El scheduler también los hace automáticamente por fecha. */

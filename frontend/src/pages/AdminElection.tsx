@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, ApiError } from '../api/client';
 import type { ActaVerification, Annulment, AuditEvent, Election, IssueResult, ParticipationReport, Results } from '../api/types';
 import { FileErrors, TemplateLinks } from '../components/Templates';
+import { ElectionForm } from '../components/ElectionForm';
 import { STATUS_LABEL } from './AdminElections';
 
 type Tab = 'participacion' | 'consola' | 'resultados' | 'padron' | 'anulaciones';
 
 const EVENT_LABEL: Record<string, string> = {
-  ELECTION_CREATED: 'Proceso creado', AUTO_OPEN_BLOCKED: 'Apertura automática bloqueada', ROLL_IMPORTED: 'Padrón importado', CODE_ISSUED: 'Código emitido',
+  ELECTION_CREATED: 'Proceso creado', ELECTION_UPDATED: 'Proceso editado', VOTER_ADDED: 'Votante agregado',
+  VOTER_ENABLED: 'Votante habilitado', VOTER_DISABLED: 'Votante bloqueado', AUTO_OPEN_BLOCKED: 'Apertura automática bloqueada', ROLL_IMPORTED: 'Padrón importado', CODE_ISSUED: 'Código emitido',
   CODE_REISSUED: 'Código reemitido', ELECTION_OPEN: 'Votación abierta', ELECTION_CLOSED: 'Votación cerrada',
   ELECTION_TALLIED: 'Escrutinio publicado', ACTA_ISSUED: 'Acta oficial emitida', TIE_RESOLVED: 'Empate resuelto (acta complementaria)',
   MEMBERS_NOTIFIED: 'Resultados notificados a los socios', PUBLIC_RESULTS_ENABLED: 'Resultados públicos habilitados',
@@ -25,6 +27,7 @@ export function AdminElection() {
   const [flash, setFlash] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [issuedCodes, setIssuedCodes] = useState<{ organization: string; code?: string }[]>([]);
   const [roll, setRoll] = useState<{ total: number; eligible: number } | null>(null);
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(() => {
     api.get<Election>(`/admin/elections/${id}`, true).then(setElection);
@@ -53,6 +56,15 @@ export function AdminElection() {
   if (!election) return <main className="admin"><p>Cargando…</p></main>;
   const closed = election.status === 'CLOSED' || election.status === 'TALLIED';
 
+  if (editing) {
+    return (
+      <main className="admin">
+        <ElectionForm initial={election} onCancel={() => setEditing(false)}
+          onDone={() => { setEditing(false); setFlash({ kind: 'ok', text: 'Cambios guardados y registrados en la consola' }); load(); }} />
+      </main>
+    );
+  }
+
   return (
     <main className="admin">
       <Link to="/admin" className="link">← Procesos</Link>
@@ -63,22 +75,27 @@ export function AdminElection() {
             <span className={`badge ${election.status}`}>{STATUS_LABEL[election.status]}</span>{' '}
             {new Date(election.opensAt).toLocaleString('es-CL')} → {new Date(election.closesAt).toLocaleString('es-CL')}
           </p>
-          {election.status === 'DRAFT' && (
+          {['DRAFT', 'OPEN'].includes(election.status) && (
             <p className="muted small">
-              {election.autoOpen ? 'Apertura automática en la fecha indicada' : 'Apertura manual (botón "Abrir ahora")'} ·{' '}
-              {election.codesOnOpen === 'ISSUE' ? 'los códigos faltantes se emiten al abrir' : 'no abre si faltan códigos'} ·{' '}
+              {election.status === 'DRAFT' && <>{election.autoOpen ? 'Apertura automática' : 'Apertura manual'} · </>}
+              {election.autoClose ? 'Cierre automático' : 'Cierre manual (la fecha de cierre es referencial)'} ·{' '}
+              {election.status === 'DRAFT' && <>{election.codesOnOpen === 'ISSUE' ? 'los códigos faltantes se emiten al abrir' : 'no abre si faltan códigos'} · </>}
               {roll ? (roll.total ? `${roll.total} en el padrón (${roll.eligible} habilitados)` : 'sin padrón cargado') : ''}
             </p>
           )}
         </div>
         <div className="toolbar">
+          {election.status === 'DRAFT' && <button className="btn" onClick={() => setEditing(true)}>Editar proceso</button>}
           {['DRAFT', 'OPEN'].includes(election.status) && (
             <button className="btn" disabled={!roll?.eligible} title={!roll?.total ? 'Carga el padrón primero' : undefined}
-              onClick={() => action<IssueResult>('/codes/issue', (r) => r.emailed === r.issued
+              onClick={() => (election.status === 'DRAFT' || confirm(
+                'Se generará un código NUEVO para cada votante que aún no votó y se le enviará por correo. ' +
+                'Los códigos anteriores dejarán de funcionar (el sistema no guarda los códigos, solo su huella, así que no puede reenviar los mismos). ¿Continuar?',
+              )) && action<IssueResult>('/codes/issue', (r) => r.emailed === r.issued
                 ? { kind: 'ok', text: `Se emitieron ${r.issued} código(s) y se enviaron por correo.` }
                 : { kind: 'error', text: `Se emitieron ${r.issued} código(s), pero solo ${r.emailed} correo(s) se enviaron. Revisa el servidor de correo y reemite los que faltan desde Participación.` },
                 (r) => setIssuedCodes(r.voters))}>
-              Emitir códigos
+              {election.status === 'OPEN' ? 'Reenviar códigos a pendientes' : 'Emitir códigos'}
             </button>
           )}
           {election.status === 'DRAFT' && (
@@ -120,7 +137,7 @@ export function AdminElection() {
         ))}
       </nav>
 
-      {tab === 'participacion' && <ParticipationTab id={id!} onReissue={(org) => setFlash({ kind: 'ok', text: `Código nuevo enviado a ${org}` })} />}
+      {tab === 'participacion' && <ParticipationTab id={id!} onChange={(text, kind = 'ok') => { setFlash({ kind, text }); load(); }} />}
       {tab === 'consola' && <ConsoleTab id={id!} />}
       {tab === 'resultados' && (closed ? <ResultsTab key={election.status} id={id!} /> : (
         <p className="notice">Los resultados se habilitan al cierre. Durante la votación el sistema no permite consultar conteos ni tendencias.</p>
@@ -131,23 +148,53 @@ export function AdminElection() {
   );
 }
 
-/** Participación con refresco automático. Muestra QUIÉN votó, nunca QUÉ. */
-function ParticipationTab({ id, onReissue }: { id: string; onReissue: (org: string) => void }) {
+/**
+ * Participación con refresco automático. Muestra QUIÉN votó, nunca QUÉ.
+ * Permite cambios puntuales al padrón (agregar, habilitar, bloquear); con la votación
+ * abierta cada cambio exige un motivo que queda en la consola.
+ */
+function ParticipationTab({ id, onChange }: { id: string; onChange: (text: string, kind?: 'ok' | 'error') => void }) {
   const [data, setData] = useState<ParticipationReport | null>(null);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'voted'>('all');
+  const [filter, setFilter] = useState<'all' | 'pending' | 'voted' | 'blocked'>('all');
+  const [adding, setAdding] = useState(false);
+  const load = useCallback(() => api.get<ParticipationReport>(`/admin/elections/${id}/participation`, true).then(setData).catch(() => null), [id]);
   useEffect(() => {
-    const load = () => api.get<ParticipationReport>(`/admin/elections/${id}/participation`, true).then(setData).catch(() => null);
     load();
     const t = setInterval(load, 10_000); // polling cada 10 s
     return () => clearInterval(t);
-  }, [id]);
+  }, [load]);
   if (!data) return <p>Cargando…</p>;
 
-  const rows = data.voters.filter((v) => filter === 'all' || (filter === 'voted' ? v.votedAt : v.eligible && !v.votedAt));
+  const open = data.status === 'OPEN';
+  const editable = data.status === 'DRAFT' || open;
+  const rows = data.voters.filter((v) =>
+    filter === 'all' || (filter === 'voted' ? v.votedAt : filter === 'blocked' ? !v.eligible : v.eligible && !v.votedAt));
+
+  /** Con la votación abierta, todo cambio pide motivo (queda en la consola). */
+  const askReason = (what: string) => {
+    if (!open) return '';
+    const r = prompt(`${what}\n\nLa votación está abierta: indica el motivo (queda registrado en la consola).`);
+    if (r === null) return null;
+    if (r.trim().length < 10) { alert('El motivo debe tener al menos 10 caracteres.'); return null; }
+    return r.trim();
+  };
+
+  async function run(fn: () => Promise<unknown>, ok: string) {
+    try { await fn(); onChange(ok); await load(); } catch (e) { onChange((e as ApiError).message, 'error'); }
+  }
+
   async function reissue(voterId: string, org: string) {
-    if (!confirm(`¿Invalidar el código actual de ${org} y enviar uno nuevo?`)) return;
-    await api.post(`/admin/elections/${id}/voters/${voterId}/reissue`, {}, true);
-    onReissue(org);
+    if (!confirm(`¿Invalidar el código actual de ${org} y enviarle uno nuevo?`)) return;
+    await run(() => api.post(`/admin/elections/${id}/voters/${voterId}/reissue`, {}, true), `Código nuevo enviado a ${org}`);
+  }
+
+  async function toggle(voterId: string, org: string, eligible: boolean) {
+    const reason = askReason(eligible ? `Habilitar a ${org}` : `Bloquear a ${org}`);
+    if (reason === null) return;
+    await run(
+      () => api.patch(`/admin/elections/${id}/voters/${voterId}/eligibility`, { eligible, reason: reason || undefined }),
+      eligible ? `${org} habilitada${open ? '; se le envió su código' : ''}` : `${org} bloqueada; su código dejó de funcionar`,
+    );
   }
 
   return (
@@ -165,12 +212,14 @@ function ParticipationTab({ id, onReissue }: { id: string; onReissue: (org: stri
         {data.quorumPercent != null && <span className="quorum-mark" style={{ left: `${data.quorumPercent}%` }} />}
       </div>
       <div className="filters">
-        {(['all', 'pending', 'voted'] as const).map((f) => (
+        {(['all', 'pending', 'voted', 'blocked'] as const).map((f) => (
           <button key={f} className={`chip ${filter === f ? 'active' : ''}`} onClick={() => setFilter(f)}>
-            {{ all: 'Todos', pending: 'Pendientes', voted: 'Votaron' }[f]}
+            {{ all: 'Todos', pending: 'Pendientes', voted: 'Votaron', blocked: 'Bloqueados' }[f]}
           </button>
         ))}
+        {editable && <button className="btn small" onClick={() => setAdding((a) => !a)}>{adding ? 'Cancelar' : '+ Agregar votante'}</button>}
       </div>
+      {adding && <AddVoter id={id} open={open} onDone={(msg) => { setAdding(false); run(async () => undefined, msg); }} />}
       <div className="table-wrap">
         <table>
           <thead><tr><th>Empresa</th><th>Correo</th><th>Estado</th><th></th></tr></thead>
@@ -179,14 +228,55 @@ function ParticipationTab({ id, onReissue }: { id: string; onReissue: (org: stri
               <tr key={v.id}>
                 <td>{v.organization}<div className="muted small">{v.ref}</div></td>
                 <td>{v.email}</td>
-                <td>{!v.eligible ? <span className="badge muted">No habilitada</span> : v.votedAt ? <span className="badge OPEN">Votó {new Date(v.votedAt).toLocaleString('es-CL')}</span> : <span className="badge DRAFT">Pendiente</span>}</td>
-                <td>{v.eligible && !v.votedAt && ['DRAFT', 'OPEN'].includes(data.status) && <button className="btn small" onClick={() => reissue(v.id, v.organization)}>Reemitir código</button>}</td>
+                <td>{!v.eligible ? <span className="badge muted">Bloqueada</span> : v.votedAt ? <span className="badge OPEN">Votó {new Date(v.votedAt).toLocaleString('es-CL')}</span> : <span className="badge DRAFT">Pendiente</span>}</td>
+                <td className="row-actions">
+                  {editable && v.eligible && !v.votedAt && <button className="btn small" onClick={() => reissue(v.id, v.organization)}>Reemitir código</button>}
+                  {editable && !v.votedAt && (
+                    <button className="btn small" onClick={() => toggle(v.id, v.organization, !v.eligible)}>{v.eligible ? 'Bloquear' : 'Habilitar'}</button>
+                  )}
+                </td>
               </tr>
             ))}
+            {rows.length === 0 && <tr><td colSpan={4} className="muted">Sin registros para este filtro.</td></tr>}
           </tbody>
         </table>
       </div>
     </section>
+  );
+}
+
+function AddVoter({ id, open, onDone }: { id: string; open: boolean; onDone: (msg: string) => void }) {
+  const [form, setForm] = useState({ ref: '', organization: '', email: '', reason: '' });
+  const [error, setError] = useState<string | null>(null);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    try {
+      const r = await api.post<{ codeIssued: boolean; emailed: boolean }>(`/admin/elections/${id}/voters`, { ...form, reason: form.reason || undefined }, true);
+      onDone(r.codeIssued
+        ? `${form.organization} agregada; ${r.emailed ? 'se le envió su código' : 'su código se emitió, pero el correo falló: reemítelo'}`
+        : `${form.organization} agregada al padrón`);
+    } catch (err) {
+      const e2 = err as ApiError;
+      setError(e2.details?.length ? e2.details.join('. ') : e2.message);
+    }
+  }
+  return (
+    <form className="card add-voter" onSubmit={submit}>
+      <div className="row three">
+        <label>RUT o ID<input value={form.ref} onChange={(e) => setForm({ ...form, ref: e.target.value })} required /></label>
+        <label>Empresa<input value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value })} required /></label>
+        <label>Correo<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
+      </div>
+      {open && (
+        <label>Motivo (obligatorio con la votación abierta; queda en la consola)
+          <input value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} required minLength={10} />
+        </label>
+      )}
+      <p className="help">{open ? 'Al agregarla quedará habilitada y recibirá su código de inmediato.' : 'Quedará habilitada; recibirá su código al emitirlos o al abrir.'}</p>
+      {error && <p className="error" role="alert">{error}</p>}
+      <button className="btn primary">Agregar</button>
+    </form>
   );
 }
 

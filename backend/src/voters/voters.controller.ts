@@ -1,9 +1,24 @@
 import {
-  BadRequestException, Body, Controller, Get, Param, ParseUUIDPipe, Post, UploadedFile, UseInterceptors,
+  BadRequestException, Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, UploadedFile, UseInterceptors,
 } from '@nestjs/common';
+import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Roles } from '../auth/roles.guard';
 import { VotersService } from './voters.service';
+
+class AddVoterDto {
+  @IsString() ref: string;
+  @IsString() organization: string;
+  @IsString() email: string;
+  @IsOptional() @IsInt() @Min(1) weight?: number;
+  @IsOptional() @IsBoolean() eligible?: boolean;
+  @IsOptional() @IsString() reason?: string;
+}
+
+class EligibilityDto {
+  @IsBoolean() eligible: boolean;
+  @IsOptional() @IsString() reason?: string;
+}
 
 @Controller('admin/elections/:id')
 @Roles('ADMIN')
@@ -24,6 +39,18 @@ export class VotersController {
     if (file) return this.voters.importRoll(id, file.buffer, file.originalname);
     if (csvText) return this.voters.importRoll(id, Buffer.from(csvText, 'utf8'), 'padron.csv');
     throw new BadRequestException('Adjunta el padrón en el campo "file" (.xlsx o .csv)');
+  }
+
+  /** Agregar un votante. Con la votación abierta exige motivo y emite su código al instante. */
+  @Post('voters')
+  addVoter(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddVoterDto) {
+    return this.voters.addVoter(id, dto);
+  }
+
+  /** Habilitar o bloquear un votante. Con la votación abierta exige motivo. */
+  @Patch('voters/:voterId/eligibility')
+  setEligibility(@Param('id', ParseUUIDPipe) id: string, @Param('voterId', ParseUUIDPipe) voterId: string, @Body() dto: EligibilityDto) {
+    return this.voters.setEligibility(id, voterId, dto.eligible, dto.reason);
   }
 
   @Post('codes/issue')

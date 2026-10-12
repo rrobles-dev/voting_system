@@ -36,7 +36,9 @@ export class Election {
   @Column({ default: 9 }) codeLength: number;
   @Column({ type: 'int', nullable: true }) quorumPercent: number | null; // null = sin quórum
   @Column({ default: 90 }) retentionDays: number;
-  @Column({ default: true }) autoOpen: boolean; // abrir solo al llegar opensAt (el cierre siempre es automático)
+  @Column({ default: true }) autoOpen: boolean; // abrir solo al llegar opensAt
+  // Cierre automático en closesAt. Si es false, closesAt es referencial y la comisión cierra a mano.
+  @Column({ default: true }) autoClose: boolean;
   @Column({ type: 'enum', enum: CodesOnOpen, default: CodesOnOpen.ISSUE }) codesOnOpen: CodesOnOpen;
   // Publicación posterior al escrutinio: acciones manuales, bloqueadas si hay empates pendientes
   @Column({ type: 'timestamptz', nullable: true }) membersNotifiedAt: Date | null;

@@ -29,11 +29,14 @@ El votante recibe un **código de recibo**. Con él puede verificar que su voto 
 - **Plantillas descargables** de padrón y candidatos en Excel (.xlsx, con hoja de instrucciones y lista desplegable) y CSV. La carga acepta .xlsx o CSV con separador `,` o `;`, porque **Excel en español guarda los CSV con punto y coma**. Los archivos se validan antes de crear el proceso y se informan **todos** los errores con su número de fila.
 - Códigos de 9 caracteres (configurable) con mayúsculas y minúsculas, sin caracteres ambiguos (`0/O`, `1/l/I`). Se guardan hasheados con HMAC, nunca en claro.
 - Varios cargos por proceso, cada uno con cupos y mínimo/máximo de marcas.
-- Apertura **automática o manual** (configurable por proceso) y cierre siempre automático, con avisos por correo.
+- **Formulario sin valores prellenados** y **pantalla de revisión** antes de crear: cada dato importante (cupos, marcas, modo de apertura y cierre) se elige explícitamente, y la revisión muestra el proceso tal como lo verán la comisión y los votantes, con avisos (por ejemplo, "hay tantos candidatos como cupos").
+- **Edición en borrador**: el proceso completo se puede corregir antes de abrir (por ejemplo, un candidato mal escrito), con revisión previa y registro del cambio en la consola. Una vez abierto, la configuración queda congelada.
+- Apertura y cierre **automáticos o manuales**, configurables por separado. Con cierre manual, la fecha de cierre es referencial: se aceptan votos hasta que la comisión cierre, y los correos lo dicen explícitamente.
 - **Política de códigos al abrir** (configurable): emitir automáticamente los que falten, o no abrir hasta que la comisión los emita. Aplica tanto a la apertura automática como al botón "Abrir ahora", y un bloqueo queda registrado en la consola.
 - **Sin falsos positivos**: emitir códigos o enviar recordatorios sin destinatarios devuelve un error que explica por qué (sin padrón, sin habilitados, todos votaron), y los mensajes informan la cantidad real de códigos y correos enviados.
 - **Sin tendencias durante la votación**: la API rechaza consultar resultados si el proceso no está cerrado. Durante la votación solo se ve la participación (quién votó, no qué).
-- Recordatorios a quienes no han votado y reemisión de código (invalida el anterior).
+- Recordatorios a quienes no han votado y reemisión de códigos (individual o a todos los pendientes). **No se pueden reenviar los mismos códigos**: el sistema solo guarda su huella, nunca el código, así que reemitir genera uno nuevo e invalida el anterior.
+- **Cambios de padrón durante la votación**: agregar un votante o cambiar su habilitación, con motivo obligatorio y registro en la consola; al habilitar a alguien con la votación abierta, recibe su código al instante. No se puede bloquear a quien ya votó ni reemplazar el padrón completo con la votación abierta.
 - Empates en el último cupo: el sistema los **detecta y marca**; se resuelven fuera del sistema según el reglamento y el admin registra el resultado.
 - Anulación con **control dual**: la solicita el Admin con el recibo del votante y la aprueba el Auditor. La boleta no se borra, queda anulada, y el votante recibe un código nuevo.
 - Log de auditoría **encadenado por hash**: alterar o borrar un evento rompe la cadena y el sistema lo detecta.
@@ -133,7 +136,9 @@ npx playwright show-report
 | GET/POST | `/api/admin/elections` | Admin |
 | GET | `/api/admin/templates/{padron,candidatos}.{xlsx,csv}` | Admin |
 | POST | `/api/admin/templates/padron/validate` · `/candidatos/parse` (multipart `file`) | Admin |
-| POST | `/api/admin/elections/:id/voters/import` (multipart `file`: .xlsx o .csv) | Admin |
+| PUT | `/api/admin/elections/:id` (solo en borrador) | Admin |
+| POST | `/api/admin/elections/:id/voters/import` (multipart `file`: .xlsx o .csv; solo en borrador) | Admin |
+| POST | `/api/admin/elections/:id/voters` · PATCH `/voters/:voterId/eligibility` (motivo obligatorio con la votación abierta) | Admin |
 | POST | `/api/admin/elections/:id/codes/issue` | Admin |
 | POST | `/api/admin/elections/:id/voters/:voterId/reissue` | Admin |
 | POST | `/api/admin/elections/:id/open` · `/close` | Admin |

@@ -22,9 +22,9 @@ export class MailService {
     }
   }
 
-  sendCode(to: string, org: string, electionTitle: string, code: string, closesAt: Date) {
+  sendCode(to: string, org: string, electionTitle: string, code: string, w: { closesAt: Date; autoClose: boolean }) {
     const m = MESSAGES.email.code;
-    return this.send(to, m.subject(electionTitle), m.body(org, electionTitle, code, closesAt, env.publicUrl));
+    return this.send(to, m.subject(electionTitle), m.body(org, electionTitle, code, w, env.publicUrl));
   }
 
   /** Sin la selección: el correo puede quedar en una bandeja compartida. Solo el recibo. */

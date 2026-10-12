@@ -61,6 +61,64 @@ export class VotersService {
     return summary;
   }
 
+  /**
+   * Cambios puntuales al padrón: en borrador libremente; con la votación abierta,
+   * con motivo obligatorio y registro en la consola. Nunca reemplazo completo con la votación abierta.
+   */
+  private async editable(electionId: string, reason?: string) {
+    const election = await this.ds.getRepository(Election).findOneBy({ id: electionId });
+    if (!election) throw new NotFoundException('Elección no encontrada');
+    if (![ElectionStatus.DRAFT, ElectionStatus.OPEN].includes(election.status)) {
+      throw new BadRequestException('El padrón ya no se puede modificar: la votación cerró');
+    }
+    if (election.status === ElectionStatus.OPEN && (!reason || reason.trim().length < 10)) {
+      throw new BadRequestException('Con la votación abierta, indica el motivo del cambio (mínimo 10 caracteres)');
+    }
+    return election;
+  }
+
+  async addVoter(electionId: string, dto: { ref: string; organization: string; email: string; weight?: number; eligible?: boolean; reason?: string }) {
+    const election = await this.editable(electionId, dto.reason);
+    const { rows, errors } = parseRoll({
+      headers: ['rut_o_id', 'empresa', 'correo', 'peso', 'habilitado'],
+      rows: [{ rut_o_id: dto.ref, empresa: dto.organization, correo: dto.email, peso: String(dto.weight ?? 1), habilitado: dto.eligible === false ? 'no' : 'si' }],
+    });
+    if (errors.length) throw new BadRequestException({ message: 'Datos inválidos', errors: errors.map((e) => e.replace('Fila 2: ', '')) });
+    const exists = await this.ds.getRepository(Voter).findOneBy({ electionId, externalRef: rows[0].ref });
+    if (exists) throw new BadRequestException(`Ya existe un votante con el identificador ${rows[0].ref}`);
+
+    const voter = await this.ds.transaction(async (em) => {
+      const v = await em.save(em.create(Voter, {
+        electionId, externalRef: rows[0].ref, organization: rows[0].organization, email: rows[0].email,
+        weight: rows[0].weight, eligible: rows[0].eligible,
+      }));
+      await this.audit.log(em, electionId, 'VOTER_ADDED', 'ADMIN', { voterId: v.id, organization: v.organization, eligible: v.eligible, reason: dto.reason ?? null });
+      return v;
+    });
+    // Con la votación abierta, un votante habilitado recibe su código de inmediato.
+    const issued = election.status === ElectionStatus.OPEN && voter.eligible ? await this.issueCodes(electionId, voter.id) : null;
+    return { voterId: voter.id, codeIssued: Boolean(issued?.issued), emailed: Boolean(issued?.emailed) };
+  }
+
+  async setEligibility(electionId: string, voterId: string, eligible: boolean, reason?: string) {
+    const election = await this.editable(electionId, reason);
+    const voter = await this.ds.getRepository(Voter).findOneBy({ id: voterId, electionId });
+    if (!voter) throw new NotFoundException('Votante no encontrado');
+    if (voter.eligible === eligible) throw new BadRequestException(eligible ? 'El votante ya está habilitado' : 'El votante ya está bloqueado');
+    if (!eligible) {
+      // Su voto ya está en la urna y el sistema no sabe cuál es: bloquearlo ahora no cambiaría nada.
+      const voted = await this.ds.getRepository(Participation).existsBy({ electionId, voterId, annulled: false });
+      if (voted) throw new BadRequestException('Este votante ya votó: no se puede bloquear');
+    }
+    await this.ds.transaction(async (em) => {
+      await em.update(Voter, { id: voterId }, { eligible });
+      if (!eligible) await em.update(AccessCode, { voterId, status: CodeStatus.ACTIVE }, { status: CodeStatus.INVALIDATED });
+      await this.audit.log(em, electionId, eligible ? 'VOTER_ENABLED' : 'VOTER_DISABLED', 'ADMIN', { voterId, organization: voter.organization, reason: reason ?? null });
+    });
+    const issued = eligible && election.status === ElectionStatus.OPEN ? await this.issueCodes(electionId, voterId) : null;
+    return { eligible, codeIssued: Boolean(issued?.issued), emailed: Boolean(issued?.emailed) };
+  }
+
   /** Elegibles pendientes de votar que no tienen un código activo. */
   async votersWithoutCode(electionId: string) {
     const pending = await this.pendingVoters(electionId);
@@ -95,12 +153,14 @@ export class VotersService {
     for (const v of voters) {
       const code = generateCode(election.codeLength);
       await this.ds.transaction(async (em) => {
+        // "Reemitido" solo si de verdad existía un código anterior: la consola debe ser exacta.
+        const hadCode = (await em.countBy(AccessCode, { voterId: v.id })) > 0;
         await em.update(AccessCode, { voterId: v.id, status: CodeStatus.ACTIVE }, { status: CodeStatus.INVALIDATED });
         await em.insert(AccessCode, { voterId: v.id, codeHash: hashCode(code, env.codePepper) });
-        await this.audit.log(em, electionId, voterId ? 'CODE_REISSUED' : 'CODE_ISSUED', opts.actor ?? 'ADMIN', { voterId: v.id });
+        await this.audit.log(em, electionId, hadCode ? 'CODE_REISSUED' : 'CODE_ISSUED', opts.actor ?? 'ADMIN', { voterId: v.id });
       });
       // El código queda emitido aunque el correo falle: se informa cuántos llegaron para poder reemitir.
-      const emailed = await this.mail.sendCode(v.email, v.organization, election.title, code, election.closesAt)
+      const emailed = await this.mail.sendCode(v.email, v.organization, election.title, code, election)
         .then(() => true).catch(() => false);
       // Solo en desarrollo: se devuelven los códigos para probar sin abrir el correo.
       issued.push({ voterId: v.id, organization: v.organization, emailed, ...(env.exposeCodes ? { code } : {}) });
@@ -143,7 +203,7 @@ export class VotersService {
     if (election.status !== ElectionStatus.OPEN) throw new BadRequestException('Solo se recuerda con la elección abierta');
     const pending = await this.pendingVoters(electionId);
     if (pending.length === 0) throw new BadRequestException(await this.whyNobody(electionId));
-    const msg = MESSAGES.email.reminder(election.title, election.closesAt);
+    const msg = MESSAGES.email.reminder(election.title, election);
     const results = await Promise.allSettled(pending.map((v) => this.mail.sendNotice(v.email, msg.subject, msg.body)));
     const sent = results.filter((r) => r.status === 'fulfilled').length;
     if (sent === 0) throw new BadRequestException('No se pudo enviar ningún recordatorio. Revisa el servidor de correo.');

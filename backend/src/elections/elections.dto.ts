@@ -31,6 +31,7 @@ export class CreateElectionDto {
   @IsOptional() @IsInt() @Min(1) @Max(100) quorumPercent?: number;
   @IsOptional() @IsInt() @Min(1) retentionDays?: number;
   @IsOptional() @IsBoolean() autoOpen?: boolean;
+  @IsOptional() @IsBoolean() autoClose?: boolean;
   @IsOptional() @IsEnum(CodesOnOpen) codesOnOpen?: CodesOnOpen;
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => PositionDto)
   positions: PositionDto[];
